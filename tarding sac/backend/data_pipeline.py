@@ -208,98 +208,95 @@ class DataDownloader:
             # Download using histdata API
             logger.debug(f"Downloading {pair} {year}-{month:02d} via histdata API...")
 
-            # Download the data file
-            # histdata downloads to current directory
-            try:
-                # Save current directory
-                original_cwd = os.getcwd()
+            # Save current directory
+            original_cwd = os.getcwd()
 
-                # Create a temporary directory and change to it
-                temp_dir = tempfile.mkdtemp()
-                temp_path = Path(temp_dir)
+            # Create a temporary directory and change to it
+            temp_dir = tempfile.mkdtemp()
+            temp_path = Path(temp_dir)
+
+            try:
+                os.chdir(str(temp_path))
 
                 try:
-                    os.chdir(str(temp_path))
+                    file_path = dl(
+                        year=str(year),
+                        month=str(month),
+                        pair=pair_lower,
+                        platform=P.GENERIC_ASCII,
+                        time_frame=TF.ONE_MINUTE
+                    )
+                finally:
+                    # Restore original directory
+                    os.chdir(original_cwd)
 
-                    try:
-                        file_path = dl(
-                            year=str(year),
-                            month=str(month),
-                            pair=pair_lower,
-                            platform=P.GENERIC_ASCII,
-                            time_frame=TF.ONE_MINUTE
-                        )
-                    finally:
-                        # Restore original directory
-                        os.chdir(original_cwd)
-
-                    # Handle file path - histdata may return None or a path
-                    if file_path is None:
-                        # Try to find the downloaded file in temp directory
-                        pattern = f"*{pair_lower}*{year}{month:02d}*.zip"
-                        matches = list(temp_path.glob(pattern))
+                # Handle file path - histdata may return None or a path
+                if file_path is None:
+                    # Try to find the downloaded file in temp directory
+                    pattern = f"*{pair_lower}*{year}{month:02d}*.zip"
+                    matches = list(temp_path.glob(pattern))
+                    if matches:
+                        file_path = matches[0]
+                    else:
+                        # Also check current directory (histdata might download there)
+                        current_dir = Path(original_cwd)
+                        matches = list(current_dir.glob(pattern))
                         if matches:
                             file_path = matches[0]
+                            # Copy to temp directory
+                            import shutil
+                            dest_path = temp_path / file_path.name
+                            shutil.copy2(file_path, dest_path)
+                            file_path = dest_path
+                            # Remove from current directory
+                            matches[0].unlink()
                         else:
-                            # Also check current directory (histdata might download there)
-                            current_dir = Path(original_cwd)
-                            matches = list(current_dir.glob(pattern))
-                            if matches:
-                                file_path = matches[0]
-                                # Copy to temp directory
-                                import shutil
-                                dest_path = temp_path / file_path.name
-                                shutil.copy2(file_path, dest_path)
-                                file_path = dest_path
-                                # Remove from current directory
-                                matches[0].unlink()
-                            else:
-                                logger.warning(f"No file returned for {pair} {year}-{month:02d}")
-                                return None
-
-                    # Handle both string path and Path object
-                    if isinstance(file_path, str):
-                        file_path = Path(file_path)
-                    elif not isinstance(file_path, Path):
-                        logger.warning(f"Unexpected file_path type: {type(file_path)}")
-                        return None
-
-                    # If file is in current directory, move it to temp for processing
-                    if not file_path.exists():
-                        logger.warning(f"Downloaded file not found: {file_path}")
-                        return None
-
-                    # Extract and parse CSV
-                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                        # Find CSV file in zip
-                        csv_files = [f for f in zip_ref.namelist() if f.endswith('.csv')]
-                        if not csv_files:
-                            logger.warning(f"No CSV file found in {file_path}")
+                            logger.warning(f"No file returned for {pair} {year}-{month:02d}")
                             return None
 
-                        csv_file = csv_files[0]
-                        csv_content = zip_ref.read(csv_file).decode('utf-8')
-                        df = self._parse_histdata_csv(csv_content)
-
-                        if len(df) > 0:
-                            logger.info(f"Downloaded {pair} {year}-{month:02d}: {len(df)} rows")
-                            return df
-                        else:
-                            logger.warning(f"Empty DataFrame for {pair} {year}-{month:02d}")
-                            return None
-
-                except Exception as e:
-                    logger.warning(f"Failed to download {pair} {year}-{month:02d}: {e}")
+                # Handle both string path and Path object
+                if isinstance(file_path, str):
+                    file_path = Path(file_path)
+                elif not isinstance(file_path, Path):
+                    logger.warning(f"Unexpected file_path type: {type(file_path)}")
                     return None
-                finally:
-                    # Clean up temporary directory
-                    try:
-                        import shutil
-                        import time
-                        time.sleep(0.1)  # Small delay to ensure all file handles are closed
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                    except Exception as e:
-                        logger.debug(f"Failed to clean up temp directory: {e}")
+
+                # If file is in current directory, move it to temp for processing
+                if not file_path.exists():
+                    logger.warning(f"Downloaded file not found: {file_path}")
+                    return None
+
+                # Extract and parse CSV
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    # Find CSV file in zip
+                    csv_files = [f for f in zip_ref.namelist() if f.endswith('.csv')]
+                    if not csv_files:
+                        logger.warning(f"No CSV file found in {file_path}")
+                        return None
+
+                    csv_file = csv_files[0]
+                    csv_content = zip_ref.read(csv_file).decode('utf-8')
+                    df = self._parse_histdata_csv(csv_content)
+
+                    if len(df) > 0:
+                        logger.info(f"Downloaded {pair} {year}-{month:02d}: {len(df)} rows")
+                        return df
+                    else:
+                        logger.warning(f"Empty DataFrame for {pair} {year}-{month:02d}")
+                        return None
+
+            except Exception as e:
+                logger.warning(f"Failed to download {pair} {year}-{month:02d}: {e}")
+                return None
+            finally:
+                # Clean up temporary directory
+                try:
+                    import shutil
+                    import time
+                    time.sleep(0.1)  # Small delay to ensure all file handles are closed
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception as e:
+                    logger.debug(f"Failed to clean up temp directory: {e}")
 
         except Exception as e:
             logger.error(f"Error downloading {pair} {year}-{month:02d}: {e}")
