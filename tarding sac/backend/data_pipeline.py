@@ -219,6 +219,17 @@ class DataDownloader:
                 os.chdir(str(temp_path))
 
                 try:
+                    # Log the exact parameters being sent to the API
+                    params = {
+                        'year': str(year),
+                        'month': str(month),
+                        'pair': pair_lower,
+                        'platform': P.GENERIC_ASCII,
+                        'time_frame': TF.ONE_MINUTE
+                    }
+                    logger.info(f"🔍 DEBUG: Calling histdata API with params: {params}")
+                    logger.info(f"🔍 DEBUG: Platform value: {P.GENERIC_ASCII}, TimeFrame value: {TF.ONE_MINUTE}")
+
                     file_path = dl(
                         year=str(year),
                         month=str(month),
@@ -226,23 +237,42 @@ class DataDownloader:
                         platform=P.GENERIC_ASCII,
                         time_frame=TF.ONE_MINUTE
                     )
+
+                    logger.info(f"🔍 DEBUG: API returned file_path: {file_path}, type: {type(file_path)}")
                 finally:
                     # Restore original directory
                     os.chdir(original_cwd)
 
                 # Handle file path - histdata may return None or a path
                 if file_path is None:
+                    logger.info(f"🔍 DEBUG: file_path is None, searching for downloaded files...")
+
+                    # List all files in temp directory
+                    temp_files = list(temp_path.glob("*"))
+                    logger.info(f"🔍 DEBUG: Files in temp directory: {[f.name for f in temp_files]}")
+
+                    # List all files in current directory
+                    current_files = list(Path(original_cwd).glob("*.zip"))
+                    logger.info(f"🔍 DEBUG: ZIP files in current directory: {[f.name for f in current_files]}")
+
                     # Try to find the downloaded file in temp directory
                     pattern = f"*{pair_lower}*{year}{month:02d}*.zip"
+                    logger.info(f"🔍 DEBUG: Searching with pattern: {pattern}")
                     matches = list(temp_path.glob(pattern))
+                    logger.info(f"🔍 DEBUG: Matches in temp dir: {[f.name for f in matches]}")
+
                     if matches:
                         file_path = matches[0]
+                        logger.info(f"🔍 DEBUG: Found file in temp dir: {file_path}")
                     else:
                         # Also check current directory (histdata might download there)
                         current_dir = Path(original_cwd)
                         matches = list(current_dir.glob(pattern))
+                        logger.info(f"🔍 DEBUG: Matches in current dir: {[f.name for f in matches]}")
+
                         if matches:
                             file_path = matches[0]
+                            logger.info(f"🔍 DEBUG: Found file in current dir: {file_path}")
                             # Copy to temp directory
                             import shutil
                             dest_path = temp_path / file_path.name
@@ -250,8 +280,9 @@ class DataDownloader:
                             file_path = dest_path
                             # Remove from current directory
                             matches[0].unlink()
+                            logger.info(f"🔍 DEBUG: Moved file to temp dir: {file_path}")
                         else:
-                            logger.warning(f"No file returned for {pair} {year}-{month:02d}")
+                            logger.warning(f"❌ No file returned for {pair} {year}-{month:02d}")
                             return None
 
                 # Handle both string path and Path object
@@ -286,7 +317,11 @@ class DataDownloader:
                         return None
 
             except Exception as e:
-                logger.warning(f"Failed to download {pair} {year}-{month:02d}: {e}")
+                logger.error(f"❌ EXCEPTION during download {pair} {year}-{month:02d}")
+                logger.error(f"❌ Exception type: {type(e).__name__}")
+                logger.error(f"❌ Exception message: {str(e)}")
+                import traceback
+                logger.error(f"❌ Full traceback:\n{traceback.format_exc()}")
                 return None
             finally:
                 # Clean up temporary directory
