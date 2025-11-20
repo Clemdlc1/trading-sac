@@ -287,12 +287,20 @@ class DataDownloader:
 
                 # Handle both string path and Path object
                 if isinstance(file_path, str):
-                    file_path = Path(file_path)
-                elif not isinstance(file_path, Path):
+                    # The API returns a relative path like ".\filename.zip" which is relative to temp_path
+                    # Since we've changed back to original_cwd, we need to make it relative to temp_path
+                    file_path = temp_path / Path(file_path).name
+                    logger.info(f"🔍 DEBUG: Converted file_path to: {file_path}")
+                elif isinstance(file_path, Path):
+                    # If it's already a Path, ensure it's relative to temp_path
+                    if not file_path.is_absolute():
+                        file_path = temp_path / file_path.name
+                        logger.info(f"🔍 DEBUG: Converted Path to: {file_path}")
+                else:
                     logger.warning(f"Unexpected file_path type: {type(file_path)}")
                     return None
 
-                # If file is in current directory, move it to temp for processing
+                # Check if file exists
                 if not file_path.exists():
                     logger.warning(f"Downloaded file not found: {file_path}")
                     return None
@@ -430,12 +438,20 @@ class DataDownloader:
 
                 # Handle both string path and Path object
                 if isinstance(file_path, str):
-                    file_path = Path(file_path)
-                elif not isinstance(file_path, Path):
+                    # The API returns a relative path like ".\filename.zip" which is relative to temp_path
+                    # Since we've changed back to original_cwd, we need to make it relative to temp_path
+                    file_path = temp_path / Path(file_path).name
+                    logger.info(f"🔍 DEBUG: Converted file_path to: {file_path}")
+                elif isinstance(file_path, Path):
+                    # If it's already a Path, ensure it's relative to temp_path
+                    if not file_path.is_absolute():
+                        file_path = temp_path / file_path.name
+                        logger.info(f"🔍 DEBUG: Converted Path to: {file_path}")
+                else:
                     logger.warning(f"Unexpected file_path type: {type(file_path)}")
                     return None
 
-                # If file is in current directory, move it to temp for processing
+                # Check if file exists
                 if not file_path.exists():
                     logger.warning(f"Downloaded file not found: {file_path}")
                     return None
