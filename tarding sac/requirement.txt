@@ -1,0 +1,17 @@
+flask
+flask-socketio
+flask-cors
+numpy
+pandas
+torch
+gymnasium
+tqdm
+h5py
+requests
+scikit-learn
+hmmlearn
+MetaTrader5
+plotly
+pyyaml
+scipy
+histdata
