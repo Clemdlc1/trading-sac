@@ -337,13 +337,156 @@ class DataDownloader:
             logger.error(f"Error downloading {pair} {year}-{month:02d}: {e}")
             return None
 
+    def download_pair_year(self, pair: str, year: int) -> Optional[pd.DataFrame]:
+        """
+        Download data for a specific pair and entire year using histdata API with month=None.
+        This is used for past years where the histdata library requires month=None.
+
+        Args:
+            pair: Currency pair (e.g., 'EURUSD')
+            year: Year to download
+
+        Returns:
+            DataFrame with OHLC data or None if download fails
+        """
+        try:
+            # Convert pair to histdata format
+            pair_lower = self._get_histdata_pair_name(pair)
+
+            # Download using histdata API
+            logger.debug(f"Downloading {pair} {year} (full year) via histdata API...")
+
+            # Save current directory
+            original_cwd = os.getcwd()
+
+            # Create a temporary directory and change to it
+            temp_dir = tempfile.mkdtemp()
+            temp_path = Path(temp_dir)
+
+            try:
+                os.chdir(str(temp_path))
+
+                try:
+                    # Log the exact parameters being sent to the API
+                    params = {
+                        'year': str(year),
+                        'month': None,  # For past years, library requires month=None
+                        'pair': pair_lower,
+                        'platform': P.GENERIC_ASCII,
+                        'time_frame': TF.ONE_MINUTE
+                    }
+                    logger.info(f"🔍 DEBUG: Calling histdata API for full year with params: {params}")
+
+                    file_path = dl(
+                        year=str(year),
+                        month=None,  # Past years require month=None
+                        pair=pair_lower,
+                        platform=P.GENERIC_ASCII,
+                        time_frame=TF.ONE_MINUTE
+                    )
+
+                    logger.info(f"🔍 DEBUG: API returned file_path: {file_path}, type: {type(file_path)}")
+                finally:
+                    # Restore original directory
+                    os.chdir(original_cwd)
+
+                # Handle file path - histdata may return None or a path
+                if file_path is None:
+                    logger.info(f"🔍 DEBUG: file_path is None, searching for downloaded files...")
+
+                    # List all files in temp directory
+                    temp_files = list(temp_path.glob("*"))
+                    logger.info(f"🔍 DEBUG: Files in temp directory: {[f.name for f in temp_files]}")
+
+                    # Try to find the downloaded file in temp directory
+                    pattern = f"*{pair_lower}*{year}*.zip"
+                    logger.info(f"🔍 DEBUG: Searching with pattern: {pattern}")
+                    matches = list(temp_path.glob(pattern))
+                    logger.info(f"🔍 DEBUG: Matches in temp dir: {[f.name for f in matches]}")
+
+                    if matches:
+                        file_path = matches[0]
+                        logger.info(f"🔍 DEBUG: Found file in temp dir: {file_path}")
+                    else:
+                        # Also check current directory
+                        current_dir = Path(original_cwd)
+                        matches = list(current_dir.glob(pattern))
+                        logger.info(f"🔍 DEBUG: Matches in current dir: {[f.name for f in matches]}")
+
+                        if matches:
+                            file_path = matches[0]
+                            logger.info(f"🔍 DEBUG: Found file in current dir: {file_path}")
+                            # Copy to temp directory
+                            import shutil
+                            dest_path = temp_path / file_path.name
+                            shutil.copy2(file_path, dest_path)
+                            file_path = dest_path
+                            # Remove from current directory
+                            matches[0].unlink()
+                            logger.info(f"🔍 DEBUG: Moved file to temp dir: {file_path}")
+                        else:
+                            logger.warning(f"❌ No file returned for {pair} {year}")
+                            return None
+
+                # Handle both string path and Path object
+                if isinstance(file_path, str):
+                    file_path = Path(file_path)
+                elif not isinstance(file_path, Path):
+                    logger.warning(f"Unexpected file_path type: {type(file_path)}")
+                    return None
+
+                # If file is in current directory, move it to temp for processing
+                if not file_path.exists():
+                    logger.warning(f"Downloaded file not found: {file_path}")
+                    return None
+
+                # Extract and parse CSV
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    # Find CSV file in zip
+                    csv_files = [f for f in zip_ref.namelist() if f.endswith('.csv')]
+                    if not csv_files:
+                        logger.warning(f"No CSV file found in {file_path}")
+                        return None
+
+                    csv_file = csv_files[0]
+                    csv_content = zip_ref.read(csv_file).decode('utf-8')
+                    df = self._parse_histdata_csv(csv_content)
+
+                    if len(df) > 0:
+                        logger.info(f"Downloaded {pair} {year} (full year): {len(df)} rows")
+                        return df
+                    else:
+                        logger.warning(f"Empty DataFrame for {pair} {year}")
+                        return None
+
+            except Exception as e:
+                logger.error(f"❌ EXCEPTION during download {pair} {year} (full year)")
+                logger.error(f"❌ Exception type: {type(e).__name__}")
+                logger.error(f"❌ Exception message: {str(e)}")
+                import traceback
+                logger.error(f"❌ Full traceback:\n{traceback.format_exc()}")
+                return None
+            finally:
+                # Clean up temporary directory
+                try:
+                    import shutil
+                    import time
+                    time.sleep(0.1)  # Small delay to ensure all file handles are closed
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception as e:
+                    logger.debug(f"Failed to clean up temp directory: {e}")
+
+        except Exception as e:
+            logger.error(f"Error downloading {pair} {year}: {e}")
+            return None
+
     def download_pair(self, pair: str, year: int) -> Optional[pd.DataFrame]:
         """
         Download data for a specific pair and year.
 
-        Downloads month by month for all years (histdata API requires a month parameter).
-        For past years: downloads all 12 months.
-        For current year: downloads only available months.
+        The histdata library has different requirements based on the year:
+        - Past years: Must use month=None to download entire year at once
+        - Current year: Must specify month to download month by month
 
         Args:
             pair: Currency pair (e.g., 'EURUSD')
@@ -355,32 +498,31 @@ class DataDownloader:
         from datetime import datetime
         current_year = datetime.now().year
 
-        # Determine how many months to download
         if year < current_year:
-            # For past years, download all 12 months
-            max_month = 12
+            # For past years, histdata library requires month=None (download entire year)
+            logger.info(f"Downloading {pair} {year} as full year (past year)")
+            return self.download_pair_year(pair, year)
         elif year == current_year:
-            # For current year, download only up to current month
-            max_month = datetime.now().month
+            # For current year, download month by month up to current month
+            logger.info(f"Downloading {pair} {year} month by month (current year)")
+            current_month = datetime.now().month
+            dfs = []
+            for month in range(1, current_month + 1):
+                df = self.download_pair_month(pair, year, month)
+                if df is not None and len(df) > 0:
+                    dfs.append(df)
+
+            if dfs:
+                result = pd.concat(dfs, ignore_index=True)
+                result = result.sort_values('timestamp').reset_index(drop=True)
+                logger.info(f"Successfully downloaded {pair} {year}: {len(result)} rows ({len(dfs)} months)")
+                return result
+            else:
+                logger.error(f"No data downloaded for {pair} {year}")
+                return None
         else:
             # Future years - no data available
             logger.warning(f"Cannot download future year: {year}")
-            return None
-
-        # Download month by month
-        dfs = []
-        for month in range(1, max_month + 1):
-            df = self.download_pair_month(pair, year, month)
-            if df is not None and len(df) > 0:
-                dfs.append(df)
-
-        if dfs:
-            result = pd.concat(dfs, ignore_index=True)
-            result = result.sort_values('timestamp').reset_index(drop=True)
-            logger.info(f"Successfully downloaded {pair} {year}: {len(result)} rows ({len(dfs)} months)")
-            return result
-        else:
-            logger.error(f"No data downloaded for {pair} {year}")
             return None
     
     def download_all_pairs(self, start_year: int = 2011, end_year: int = 2025) -> Dict[str, pd.DataFrame]:
