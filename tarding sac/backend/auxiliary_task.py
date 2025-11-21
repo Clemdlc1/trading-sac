@@ -620,8 +620,9 @@ class AuxiliaryTaskLearner:
         
         if not input_path.exists():
             raise FileNotFoundError(f"Autoencoder file not found: {input_path}")
-        
-        checkpoint = torch.load(input_path, map_location=device)
+
+        # PyTorch 2.6+ nécessite weights_only=False pour charger des classes personnalisées
+        checkpoint = torch.load(input_path, map_location=device, weights_only=False)
         
         self.autoencoder.load_state_dict(checkpoint['autoencoder_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

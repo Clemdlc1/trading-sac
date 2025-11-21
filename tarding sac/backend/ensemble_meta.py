@@ -805,8 +805,9 @@ class EnsembleMetaController(MetaController):
         
         if not input_path.exists():
             raise FileNotFoundError(f"Meta-controller file not found: {input_path}")
-        
-        checkpoint = torch.load(input_path, map_location=device)
+
+        # PyTorch 2.6+ nécessite weights_only=False pour charger des classes personnalisées
+        checkpoint = torch.load(input_path, map_location=device, weights_only=False)
         
         self.network.load_state_dict(checkpoint['network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

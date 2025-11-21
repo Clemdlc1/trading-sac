@@ -947,11 +947,12 @@ class SACAgent:
             filename: Input filename
         """
         input_path = self.config.models_dir / filename
-        
+
         if not input_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {input_path}")
-        
-        checkpoint = torch.load(input_path, map_location=device)
+
+        # PyTorch 2.6+ nécessite weights_only=False pour charger des classes personnalisées
+        checkpoint = torch.load(input_path, map_location=device, weights_only=False)
         
         # Load networks
         self.actor.load_state_dict(checkpoint['actor_state_dict'])

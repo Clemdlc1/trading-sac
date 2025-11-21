@@ -329,7 +329,8 @@ def load_model():
         )
         
         # Charger depuis checkpoint
-        checkpoint = torch.load(model_path)
+        # PyTorch 2.6+ nécessite weights_only=False pour charger des classes personnalisées
+        checkpoint = torch.load(model_path, weights_only=False)
         system_state.ensemble_controller.load(model_path)
         
         system_state.current_model = Path(model_path).stem
