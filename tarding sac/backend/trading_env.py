@@ -700,7 +700,7 @@ class TradingEnvironment(gym.Env):
             n_trades_today
         )
         
-        # Calculate current drawdown for info (not used for termination)
+        # Calculate current drawdown (used for termination at 80%)
         current_dd = (self.peak_equity - current_equity) / self.peak_equity if self.peak_equity > 0 else 0.0
 
         # Check termination conditions
@@ -711,7 +711,13 @@ class TradingEnvironment(gym.Env):
         if self.current_step >= self.episode_length - 1:
             done = True
 
-        # 2. Balance = 0 (ruiné)
+        # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
+        if current_dd >= 0.80:
+            done = True
+            terminal_reward = -8.0  # Severe penalty for excessive drawdown
+            logger.warning(f"Drawdown critique at step {self.current_step}: DD={current_dd:.2%}, equity={current_equity:.2f}")
+
+        # 3. Balance = 0 (ruiné)
         if current_equity <= 0:
             done = True
             terminal_reward = -10.0  # Severe penalty
