@@ -1059,8 +1059,8 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'reward': float(episode_reward),
                     'steps': int(episode_steps),
                     'episode_length': int(env.episode_length),  # Pour la barre de progression d'épisode
-                    'critic_loss': float(np.mean(critic_losses)) if critic_losses else 0.0,
-                    'actor_loss': float(np.mean(actor_losses)) if actor_losses else 0.0,
+                    'critic_loss': float(critic_loss_sum / update_count) if update_count > 0 else 0.0,
+                    'actor_loss': float(actor_loss_sum / update_count) if update_count > 0 else 0.0,
                     'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
                     'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
                     'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
