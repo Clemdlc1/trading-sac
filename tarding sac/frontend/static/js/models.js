@@ -79,6 +79,25 @@ socket.on('training_error', function(data) {
     showNotification('Erreur', data.error, 'danger');
 });
 
+socket.on('training_device_info', function(data) {
+    console.log('Device info:', data);
+    const deviceInfo = document.getElementById('device-info');
+    const deviceName = document.getElementById('device-name');
+
+    deviceName.textContent = data.device;
+
+    // Changer la couleur selon GPU/CPU
+    if (data.cuda_available) {
+        deviceInfo.className = 'alert alert-success mb-2';
+        deviceName.innerHTML = `<i class="fas fa-bolt"></i> ${data.device} (GPU Accéléré)`;
+    } else {
+        deviceInfo.className = 'alert alert-warning mb-2';
+        deviceName.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${data.device} (Mode CPU - Plus lent)`;
+    }
+
+    deviceInfo.style.display = 'block';
+});
+
 // ============================================================================
 // CHARGEMENT DES DONNÉES
 // ============================================================================

@@ -739,7 +739,26 @@ def handle_update_request():
 def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[str], agent_id: Optional[int] = None):
     """Exécuter l'entraînement en background"""
     try:
+        # Afficher les informations du device
+        cuda_available = torch.cuda.is_available()
+        device_name = str(torch.cuda.get_device_name(0)) if cuda_available else 'CPU'
+
+        logger.info("="*80)
         logger.info(f"Démarrage entraînement: {num_episodes} épisodes, Agent: {agent_id if agent_id is not None else 'tous'}")
+        logger.info(f"Device: {device_name}")
+        if cuda_available:
+            logger.info(f"GPU Count: {torch.cuda.device_count()}")
+            logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        else:
+            logger.warning("⚠️ CUDA non disponible - Entraînement sur CPU (sera plus lent)")
+        logger.info("="*80)
+
+        # Notifier le frontend du device utilisé
+        socketio.emit('training_device_info', {
+            'device': device_name,
+            'cuda_available': cuda_available,
+            'timestamp': datetime.now().isoformat()
+        })
 
         # Charger les données
         data_pipeline = DataPipeline()
@@ -948,7 +967,26 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 def run_meta_controller_training(num_episodes: int, batch_size: int):
     """Exécuter l'entraînement du meta-controller en background"""
     try:
+        # Afficher les informations du device
+        cuda_available = torch.cuda.is_available()
+        device_name = str(torch.cuda.get_device_name(0)) if cuda_available else 'CPU'
+
+        logger.info("="*80)
         logger.info(f"Démarrage entraînement meta-controller: {num_episodes} épisodes")
+        logger.info(f"Device: {device_name}")
+        if cuda_available:
+            logger.info(f"GPU Count: {torch.cuda.device_count()}")
+            logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        else:
+            logger.warning("⚠️ CUDA non disponible - Entraînement sur CPU (sera plus lent)")
+        logger.info("="*80)
+
+        # Notifier le frontend du device utilisé
+        socketio.emit('training_device_info', {
+            'device': device_name,
+            'cuda_available': cuda_available,
+            'timestamp': datetime.now().isoformat()
+        })
 
         # Charger les données
         data_pipeline = DataPipeline()
