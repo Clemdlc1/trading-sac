@@ -42,7 +42,7 @@ from backend.data_pipeline import DataPipeline
 from backend.feature_engineering import FeatureEngineer
 from backend.hmm_detector import HMMRegimeDetector
 from backend.trading_env import TradingEnvironment
-from backend.sac_agent import SACAgent
+from backend.sac_agent import SACAgent, SACConfig
 from backend.auxiliary_task import AuxiliaryTaskLearner
 from backend.ensemble_meta import EnsembleMetaController
 from backend.validation import ValidationFramework
@@ -678,16 +678,18 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
         # Créer les agents
         agents = []
         for i in range(system_state.config['model']['ensemble_size']):
-            agent = SACAgent(
+            # Create SAC config with correct parameters
+            sac_config = SACConfig(
                 state_dim=30,
                 action_dim=1,
-                hidden_dim=256
+                hidden_dims=[256, 256]
             )
-            
+            agent = SACAgent(config=sac_config, agent_id=i+1)
+
             # Charger depuis checkpoint si spécifié
             if from_checkpoint:
                 agent.load_checkpoint(from_checkpoint)
-            
+
             agents.append(agent)
         
         # Entraîner chaque agent
@@ -874,9 +876,14 @@ def run_validation_process(validator: ValidationFramework, model_path: str):
     """Exécuter le processus de validation"""
     try:
         logger.info(f"Démarrage validation pour: {model_path}")
-        
+
         # Charger le modèle
-        agent = SACAgent(state_dim=30, action_dim=1, hidden_dim=256)
+        sac_config = SACConfig(
+            state_dim=30,
+            action_dim=1,
+            hidden_dims=[256, 256]
+        )
+        agent = SACAgent(config=sac_config, agent_id=1)
         agent.load_checkpoint(model_path)
         
         # Exécuter validation walk-forward
