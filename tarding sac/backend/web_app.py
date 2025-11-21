@@ -803,6 +803,16 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
         logger.info(f"Agents créés: {len(agents)}")
 
+        # Historique des métriques pour les graphiques
+        metrics_history = {
+            'episodes': [],
+            'rewards': [],
+            'sharpe_ratios': [],
+            'win_rates': [],
+            'max_drawdowns': [],
+            'total_returns': []
+        }
+
         # Entraîner chaque agent
         for episode in range(num_episodes):
             if system_state.stop_event.is_set():
@@ -860,6 +870,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'total_return': float(env_metrics.get('total_return', 0))
                 }
 
+                # Ajouter à l'historique
+                metrics_history['episodes'].append(episode + 1)
+                metrics_history['rewards'].append(float(episode_reward))
+                metrics_history['sharpe_ratios'].append(float(env_metrics.get('sharpe_ratio', 0)))
+                metrics_history['win_rates'].append(float(env_metrics.get('win_rate', 0)))
+                metrics_history['max_drawdowns'].append(float(env_metrics.get('max_drawdown', 0)))
+                metrics_history['total_returns'].append(float(env_metrics.get('total_return', 0)))
+
                 # Émettre progression toutes les 5 épisodes
                 if episode % 5 == 0:
                     system_state.save_training_state()
@@ -877,19 +895,20 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                         'win_rate': float(env_metrics.get('win_rate', 0)),
                         'profit_factor': float(env_metrics.get('profit_factor', 0)),
                         'total_return': float(env_metrics.get('total_return', 0)),
-                        'timestamp': datetime.now().isoformat()
+                        'total_trades': int(env_metrics.get('total_trades', 0)),
+                        'winning_trades': int(env_metrics.get('winning_trades', 0)),
+                        'final_equity': float(env_metrics.get('final_equity', 0)),
+                        'timestamp': datetime.now().isoformat(),
+                        'metrics_history': metrics_history  # Envoyer l'historique complet
                     })
 
             # Sauvegarder checkpoint tous les 100 épisodes
             if episode % 100 == 0 and episode > 0:
-                checkpoint_dir = Path(system_state.config['model']['checkpoint_dir'])
-                checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
                 for i, agent in enumerate(agents):
                     current_agent_id = agent_indices[i] if agent_id is None else agent_id
-                    checkpoint_path = checkpoint_dir / f'checkpoint_ep{episode}_agent{current_agent_id}.pt'
-                    agent.save(str(checkpoint_path))
-                    logger.info(f"Checkpoint sauvegardé: {checkpoint_path}")
+                    filename = f'checkpoint_ep{episode}_agent{current_agent_id}.pt'
+                    agent.save(filename)
+                    logger.info(f"Checkpoint sauvegardé: {filename}")
         
         logger.info("Entraînement terminé")
         system_state.is_training = False
@@ -952,8 +971,8 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
             checkpoints = list(checkpoint_dir.glob(f'checkpoint_*_agent{i+3}.pt'))
             if checkpoints:
                 latest_checkpoint = max(checkpoints, key=lambda p: p.stat().st_mtime)
-                agent.load(str(latest_checkpoint))
-                logger.info(f"Agent {i+3} chargé depuis: {latest_checkpoint}")
+                agent.load(latest_checkpoint.name)  # Passer seulement le nom du fichier
+                logger.info(f"Agent {i+3} chargé depuis: {latest_checkpoint.name}")
             else:
                 logger.warning(f"Aucun checkpoint trouvé pour l'agent {i+3}")
 
@@ -1048,9 +1067,9 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
 
             # Sauvegarder checkpoint tous les 50 épisodes
             if episode % 50 == 0 and episode > 0:
-                checkpoint_path = checkpoint_dir / f'meta_controller_ep{episode}.pt'
-                meta_controller.save(str(checkpoint_path))
-                logger.info(f"Meta-controller checkpoint sauvegardé: {checkpoint_path}")
+                filename = f'meta_controller_ep{episode}.pt'
+                meta_controller.save(filename)
+                logger.info(f"Meta-controller checkpoint sauvegardé: {filename}")
 
         logger.info("Entraînement meta-controller terminé")
         system_state.is_training = False

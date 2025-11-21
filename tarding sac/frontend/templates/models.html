@@ -75,9 +75,9 @@
                                         <label class="form-label">Agent à entraîner</label>
                                         <select class="form-select" id="agent-select">
                                             <option value="">Tous les agents</option>
-                                            <option value="3">Agent SAC #3</option>
-                                            <option value="4">Agent SAC #4</option>
-                                            <option value="5">Agent SAC #5</option>
+                                            <option value="3">Sharpe Optimized (γ=0.95)</option>
+                                            <option value="4">Sortino Optimized (γ=0.97)</option>
+                                            <option value="5">Aggressive (γ=0.93)</option>
                                         </select>
                                     </div>
                                 </div>
@@ -119,6 +119,17 @@
                             </div>
                             <div class="mb-2">
                                 <strong id="training-info">Épisode 0/1000 - Agent: N/A</strong>
+                            </div>
+
+                            <!-- Statistiques d'épisode -->
+                            <div class="alert alert-info mb-3" id="episode-stats">
+                                <small>
+                                    <strong>Statistiques de l'épisode:</strong><br>
+                                    Total trades: <span id="stat-total-trades">0</span> |
+                                    Winning: <span id="stat-winning-trades">0</span> |
+                                    Losing: <span id="stat-losing-trades">0</span> |
+                                    Final Equity: $<span id="stat-final-equity">0</span>
+                                </small>
                             </div>
 
                             <!-- Métriques détaillées -->
@@ -206,6 +217,41 @@
                                         <div class="card-body p-2">
                                             <small class="text-muted d-block">Actor Loss</small>
                                             <strong id="metric-actor-loss">0.00</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Graphiques d'évolution -->
+                            <div class="row mt-4">
+                                <div class="col-md-12">
+                                    <h6>Évolution des métriques</h6>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-reward"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-sharpe"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-winrate"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-returns"></canvas>
                                         </div>
                                     </div>
                                 </div>
@@ -298,6 +344,7 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="/static/js/models.js"></script>
 </body>
 </html>

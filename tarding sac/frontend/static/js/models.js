@@ -16,6 +16,23 @@ const modelsState = {
     trainingType: null
 };
 
+// Mapping des noms d'agents
+const agentNames = {
+    '3': 'Sharpe Optimized',
+    '4': 'Sortino Optimized',
+    '5': 'Aggressive',
+    'all': 'All Agents',
+    'meta_controller': 'Meta-Controller'
+};
+
+// Charts
+let charts = {
+    reward: null,
+    sharpe: null,
+    winrate: null,
+    returns: null
+};
+
 // ============================================================================
 // INITIALISATION
 // ============================================================================
@@ -28,6 +45,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Setup event listeners
     setupEventListeners();
+
+    // Initialiser les graphiques
+    initCharts();
 
     // Charger l'état du training si en cours
     loadTrainingState();
@@ -446,8 +466,18 @@ function updateTrainingProgress(data) {
     progressBar.textContent = Math.round(percentage) + '%';
 
     const info = document.getElementById('training-info');
-    const agentText = data.agent !== undefined ? `Agent: ${data.agent}` : 'Agent: N/A';
-    info.textContent = `Épisode ${data.episode}/${modelsState.totalEpisodes} - ${agentText}`;
+    const agentName = data.agent !== undefined ? (agentNames[data.agent] || `Agent #${data.agent}`) : 'N/A';
+    const totalTrades = data.total_trades !== undefined ? ` - Trades: ${data.total_trades}` : '';
+    info.textContent = `Épisode ${data.episode}/${modelsState.totalEpisodes} - ${agentName}${totalTrades}`;
+
+    // Mettre à jour les statistiques d'épisode
+    if (data.total_trades !== undefined) {
+        document.getElementById('stat-total-trades').textContent = data.total_trades;
+        document.getElementById('stat-winning-trades').textContent = data.winning_trades || 0;
+        const losingTrades = data.total_trades - (data.winning_trades || 0);
+        document.getElementById('stat-losing-trades').textContent = losingTrades;
+        document.getElementById('stat-final-equity').textContent = (data.final_equity || 0).toFixed(2);
+    }
 
     // Mettre à jour les métriques détaillées
     document.getElementById('metric-reward').textContent = (data.reward || 0).toFixed(2);
@@ -467,6 +497,187 @@ function updateTrainingProgress(data) {
     } else {
         document.getElementById('loss-metrics').style.display = 'none';
     }
+
+    // Mettre à jour les graphiques si historique disponible
+    if (data.metrics_history) {
+        updateCharts(data.metrics_history);
+    }
+}
+
+// ============================================================================
+// GRAPHIQUES
+// ============================================================================
+
+function initCharts() {
+    // Configuration commune
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2,
+        plugins: {
+            legend: {
+                display: false
+            }
+        },
+        scales: {
+            x: {
+                display: true,
+                title: {
+                    display: true,
+                    text: 'Épisode'
+                }
+            },
+            y: {
+                display: true
+            }
+        }
+    };
+
+    // Reward Chart
+    const ctxReward = document.getElementById('chart-reward').getContext('2d');
+    charts.reward = new Chart(ctxReward, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Reward',
+                data: [],
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                y: {
+                    ...commonOptions.scales.y,
+                    title: {
+                        display: true,
+                        text: 'Reward'
+                    }
+                }
+            }
+        }
+    });
+
+    // Sharpe Ratio Chart
+    const ctxSharpe = document.getElementById('chart-sharpe').getContext('2d');
+    charts.sharpe = new Chart(ctxSharpe, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Sharpe Ratio',
+                data: [],
+                borderColor: 'rgb(54, 162, 235)',
+                backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                y: {
+                    ...commonOptions.scales.y,
+                    title: {
+                        display: true,
+                        text: 'Sharpe Ratio'
+                    }
+                }
+            }
+        }
+    });
+
+    // Win Rate Chart
+    const ctxWinrate = document.getElementById('chart-winrate').getContext('2d');
+    charts.winrate = new Chart(ctxWinrate, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Win Rate (%)',
+                data: [],
+                borderColor: 'rgb(255, 206, 86)',
+                backgroundColor: 'rgba(255, 206, 86, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                y: {
+                    ...commonOptions.scales.y,
+                    title: {
+                        display: true,
+                        text: 'Win Rate (%)'
+                    },
+                    min: 0,
+                    max: 100
+                }
+            }
+        }
+    });
+
+    // Total Return Chart
+    const ctxReturns = document.getElementById('chart-returns').getContext('2d');
+    charts.returns = new Chart(ctxReturns, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Total Return (%)',
+                data: [],
+                borderColor: 'rgb(153, 102, 255)',
+                backgroundColor: 'rgba(153, 102, 255, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                y: {
+                    ...commonOptions.scales.y,
+                    title: {
+                        display: true,
+                        text: 'Total Return (%)'
+                    }
+                }
+            }
+        }
+    });
+}
+
+function updateCharts(metricsHistory) {
+    if (!metricsHistory || !metricsHistory.episodes) return;
+
+    // Update Reward Chart
+    charts.reward.data.labels = metricsHistory.episodes;
+    charts.reward.data.datasets[0].data = metricsHistory.rewards;
+    charts.reward.update('none'); // Update without animation for performance
+
+    // Update Sharpe Chart
+    charts.sharpe.data.labels = metricsHistory.episodes;
+    charts.sharpe.data.datasets[0].data = metricsHistory.sharpe_ratios;
+    charts.sharpe.update('none');
+
+    // Update Win Rate Chart (convert to percentage)
+    charts.winrate.data.labels = metricsHistory.episodes;
+    charts.winrate.data.datasets[0].data = metricsHistory.win_rates.map(wr => wr * 100);
+    charts.winrate.update('none');
+
+    // Update Returns Chart (convert to percentage)
+    charts.returns.data.labels = metricsHistory.episodes;
+    charts.returns.data.datasets[0].data = metricsHistory.total_returns.map(r => r * 100);
+    charts.returns.update('none');
 }
 
 // ============================================================================
