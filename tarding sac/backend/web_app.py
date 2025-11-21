@@ -91,26 +91,29 @@ class TradingSystemState:
         self.data_pipeline = None
         self.feature_engineer = None
         self.hmm_detector = None
-        
+
         # Métriques en temps réel
         self.current_equity = 10000.0
         self.current_position = 0.0
         self.current_pnl = 0.0
         self.daily_trades = []
         self.performance_metrics = {}
-        
+
         # Historique
         self.equity_history = []
         self.trade_history = []
         self.signal_history = []
-        
+
         # Configuration
         self.config = self.load_config()
-        
+
         # Threading
         self.trading_thread = None
         self.monitoring_thread = None
         self.stop_event = threading.Event()
+
+        # État du training
+        self.training_state = self.load_training_state()
         
     def load_config(self) -> Dict:
         """Charge la configuration depuis YAML"""
@@ -151,6 +154,29 @@ class TradingSystemState:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, 'w') as f:
             yaml.dump(self.config, f)
+
+    def load_training_state(self) -> Dict:
+        """Charge l'état du training depuis JSON"""
+        state_path = Path('logs/training_state.json')
+        if state_path.exists():
+            with open(state_path, 'r') as f:
+                return json.load(f)
+        return {
+            'is_training': False,
+            'current_agent': None,
+            'current_episode': 0,
+            'total_episodes': 0,
+            'start_time': None,
+            'metrics': {},
+            'training_type': None  # 'sac_agent' or 'meta_controller'
+        }
+
+    def save_training_state(self):
+        """Sauvegarde l'état du training"""
+        state_path = Path('logs/training_state.json')
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_path, 'w') as f:
+            json.dump(self.training_state, f, indent=2)
 
 # État global
 system_state = TradingSystemState()
@@ -204,6 +230,7 @@ def get_status():
         'position': system_state.current_position,
         'pnl': system_state.current_pnl,
         'daily_trades': len(system_state.daily_trades),
+        'training_state': system_state.training_state,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -336,31 +363,44 @@ def start_training():
             'success': False,
             'error': 'Entraînement déjà en cours'
         }), 400
-    
+
     try:
         data = request.json
-        
+
         # Paramètres d'entraînement
         num_episodes = data.get('num_episodes', 1000)
         batch_size = data.get('batch_size', 256)
         from_checkpoint = data.get('from_checkpoint', None)
-        
+        agent_id = data.get('agent_id', None)  # None = tous les agents, sinon l'ID spécifique
+
+        # Initialiser l'état du training
+        system_state.training_state = {
+            'is_training': True,
+            'current_agent': agent_id if agent_id is not None else 'all',
+            'current_episode': 0,
+            'total_episodes': num_episodes,
+            'start_time': datetime.now().isoformat(),
+            'metrics': {},
+            'training_type': 'sac_agent'
+        }
+        system_state.save_training_state()
+
         # Lancer l'entraînement dans un thread séparé
         training_thread = threading.Thread(
             target=run_training,
-            args=(num_episodes, batch_size, from_checkpoint)
+            args=(num_episodes, batch_size, from_checkpoint, agent_id)
         )
         training_thread.daemon = True
         training_thread.start()
-        
+
         system_state.training_thread = training_thread
         system_state.is_training = True
-        
+
         return jsonify({
             'success': True,
-            'message': 'Entraînement démarré'
+            'message': f'Entraînement démarré (Agent: {agent_id if agent_id is not None else "tous"})'
         })
-    
+
     except Exception as e:
         logger.error(f"Erreur démarrage entraînement: {e}")
         return jsonify({
@@ -376,14 +416,69 @@ def stop_training():
             'success': False,
             'error': 'Aucun entraînement en cours'
         }), 400
-    
+
     system_state.stop_event.set()
     system_state.is_training = False
-    
+
+    # Mettre à jour l'état du training
+    system_state.training_state['is_training'] = False
+    system_state.save_training_state()
+
     return jsonify({
         'success': True,
         'message': 'Entraînement arrêté'
     })
+
+@app.route('/api/training/meta-controller/start', methods=['POST'])
+def start_meta_controller_training():
+    """Démarrer l'entraînement du meta-controller"""
+    if system_state.is_training:
+        return jsonify({
+            'success': False,
+            'error': 'Entraînement déjà en cours'
+        }), 400
+
+    try:
+        data = request.json
+
+        # Paramètres d'entraînement
+        num_episodes = data.get('num_episodes', 500)
+        batch_size = data.get('batch_size', 256)
+
+        # Initialiser l'état du training
+        system_state.training_state = {
+            'is_training': True,
+            'current_agent': 'meta_controller',
+            'current_episode': 0,
+            'total_episodes': num_episodes,
+            'start_time': datetime.now().isoformat(),
+            'metrics': {},
+            'training_type': 'meta_controller'
+        }
+        system_state.save_training_state()
+
+        # Lancer l'entraînement dans un thread séparé
+        training_thread = threading.Thread(
+            target=run_meta_controller_training,
+            args=(num_episodes, batch_size)
+        )
+        training_thread.daemon = True
+        training_thread.start()
+
+        system_state.training_thread = training_thread
+        system_state.is_training = True
+
+        return jsonify({
+            'success': True,
+            'message': 'Entraînement du meta-controller démarré'
+        })
+
+    except Exception as e:
+        logger.error(f"Erreur démarrage entraînement meta-controller: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/trading/start', methods=['POST'])
 def start_trading():
@@ -641,29 +736,29 @@ def handle_update_request():
 # FONCTIONS DE BACKGROUND
 # ============================================================================
 
-def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[str]):
+def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[str], agent_id: Optional[int] = None):
     """Exécuter l'entraînement en background"""
     try:
-        logger.info(f"Démarrage entraînement: {num_episodes} épisodes")
-        
+        logger.info(f"Démarrage entraînement: {num_episodes} épisodes, Agent: {agent_id if agent_id is not None else 'tous'}")
+
         # Charger les données
         data_pipeline = DataPipeline()
         train_data, val_data, test_data = data_pipeline.get_processed_data()
-        
+
+        # Utiliser FeaturePipeline avec cache pour normaliser les features
+        from backend.feature_engineering import FeaturePipeline
+        feature_pipeline = FeaturePipeline()
+        train_features, val_features, test_features = feature_pipeline.run_full_pipeline(
+            train_data, val_data, test_data, force_recalculate=False
+        )
+
+        logger.info(f"Features chargées: {len(train_features)} samples d'entraînement")
+
         # Utiliser les données d'entraînement pour l'agent
-        # Prendre EURUSD comme paire principale
         eurusd_data = train_data.get('EURUSD')
         if eurusd_data is None:
             raise ValueError("Données EURUSD non trouvées dans le dataset d'entraînement")
-        
-        # Feature engineering
-        feature_engineer = FeatureEngineer()
-        # Calculer les features pour toutes les paires nécessaires
-        all_data = {**train_data, **val_data}
-        raw_features = feature_engineer.calculate_all_features(all_data)
-        # Normaliser les features
-        normalized_features = feature_engineer.normalize_features(raw_features)
-        
+
         # Créer l'environnement
         from backend.trading_env import TradingEnvConfig
         env_config = TradingEnvConfig(
@@ -671,29 +766,43 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
         )
         env = TradingEnvironment(
             data=eurusd_data,
-            features=normalized_features,
+            features=train_features,
             config=env_config
         )
-        
-        # Créer les agents
+
+        # Créer les agents selon agent_id
         agents = []
-        for i in range(system_state.config['model']['ensemble_size']):
-            # Create SAC config with correct parameters
+        if agent_id is not None:
+            # Entraîner un seul agent
             sac_config = SACConfig(
                 state_dim=30,
                 action_dim=1,
                 hidden_dims=[256, 256]
             )
-            # Use agent_id >= 3 to avoid regime feature requirements for agents 1 & 2
-            # (agents 1 & 2 expect state_dim=32 with HMM regime features)
-            agent = SACAgent(config=sac_config, agent_id=i+3)
-
-            # Charger depuis checkpoint si spécifié
+            agent = SACAgent(config=sac_config, agent_id=agent_id)
             if from_checkpoint:
                 agent.load(from_checkpoint)
-
             agents.append(agent)
-        
+            agent_indices = [agent_id]
+        else:
+            # Entraîner tous les agents
+            for i in range(system_state.config['model']['ensemble_size']):
+                sac_config = SACConfig(
+                    state_dim=30,
+                    action_dim=1,
+                    hidden_dims=[256, 256]
+                )
+                # Use agent_id >= 3 to avoid regime feature requirements
+                agent = SACAgent(config=sac_config, agent_id=i+3)
+                if from_checkpoint:
+                    checkpoint_path = from_checkpoint.replace('.pt', f'_agent{i}.pt')
+                    if Path(checkpoint_path).exists():
+                        agent.load(checkpoint_path)
+                agents.append(agent)
+            agent_indices = list(range(len(agents)))
+
+        logger.info(f"Agents créés: {len(agents)}")
+
         # Entraîner chaque agent
         for episode in range(num_episodes):
             if system_state.stop_event.is_set():
@@ -702,15 +811,18 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             for agent_idx, agent in enumerate(agents):
                 state = env.reset()
                 episode_reward = 0
+                episode_steps = 0
                 done = False
-                
+                critic_losses = []
+                actor_losses = []
+
                 while not done:
                     if system_state.stop_event.is_set():
                         break
-                    
+
                     # Sélectionner action
                     action = agent.select_action(state, deterministic=False)
-                    
+
                     # Step environment
                     next_state, reward, done, info = env.step(action)
 
@@ -719,43 +831,251 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
                     # Update agent
                     if len(agent.replay_buffer) > batch_size:
-                        agent.update(batch_size)
-                    
+                        losses = agent.update()
+                        if losses:
+                            critic_losses.append(losses.get('critic_loss', 0))
+                            actor_losses.append(losses.get('actor_loss', 0))
+
                     episode_reward += reward
+                    episode_steps += 1
                     state = next_state
-                
-                # Émettre progression
-                if episode % 10 == 0:
+
+                # Calculer métriques de l'épisode
+                env_metrics = env.get_episode_metrics()
+
+                # Mettre à jour l'état du training
+                current_agent_id = agent_indices[agent_idx] if agent_id is None else agent_id
+                system_state.training_state['current_episode'] = episode + 1
+                system_state.training_state['metrics'] = {
+                    'agent_id': current_agent_id,
+                    'episode_reward': float(episode_reward),
+                    'episode_steps': episode_steps,
+                    'avg_critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
+                    'avg_actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
+                    'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
+                    'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
+                    'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
+                    'win_rate': float(env_metrics.get('win_rate', 0)),
+                    'profit_factor': float(env_metrics.get('profit_factor', 0)),
+                    'total_return': float(env_metrics.get('total_return', 0))
+                }
+
+                # Émettre progression toutes les 5 épisodes
+                if episode % 5 == 0:
+                    system_state.save_training_state()
                     socketio.emit('training_progress', {
-                        'episode': episode,
-                        'agent': agent_idx,
-                        'reward': episode_reward,
+                        'episode': episode + 1,
+                        'total_episodes': num_episodes,
+                        'agent': current_agent_id,
+                        'reward': float(episode_reward),
+                        'steps': episode_steps,
+                        'critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
+                        'actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
+                        'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
+                        'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
+                        'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
+                        'win_rate': float(env_metrics.get('win_rate', 0)),
+                        'profit_factor': float(env_metrics.get('profit_factor', 0)),
+                        'total_return': float(env_metrics.get('total_return', 0)),
                         'timestamp': datetime.now().isoformat()
                     })
-            
-            # Sauvegarder checkpoint
-            if episode % 100 == 0:
-                checkpoint_path = Path(system_state.config['model']['checkpoint_dir']) / f'checkpoint_ep{episode}.pt'
-                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Sauvegarder checkpoint tous les 100 épisodes
+            if episode % 100 == 0 and episode > 0:
+                checkpoint_dir = Path(system_state.config['model']['checkpoint_dir'])
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
                 for i, agent in enumerate(agents):
-                    agent.save(f'checkpoint_ep{episode}_agent{i}.pt')
+                    current_agent_id = agent_indices[i] if agent_id is None else agent_id
+                    checkpoint_path = checkpoint_dir / f'checkpoint_ep{episode}_agent{current_agent_id}.pt'
+                    agent.save(str(checkpoint_path))
+                    logger.info(f"Checkpoint sauvegardé: {checkpoint_path}")
         
         logger.info("Entraînement terminé")
         system_state.is_training = False
         system_state.stop_event.clear()
-        
+
+        # Mettre à jour l'état final
+        system_state.training_state['is_training'] = False
+        system_state.save_training_state()
+
         socketio.emit('training_complete', {
             'message': 'Entraînement terminé avec succès',
+            'agent_id': agent_id if agent_id is not None else 'all',
             'timestamp': datetime.now().isoformat()
         })
-    
+
     except Exception as e:
         logger.error(f"Erreur pendant l'entraînement: {e}")
         logger.error(traceback.format_exc())
         system_state.is_training = False
         system_state.stop_event.clear()
-        
+
+        # Mettre à jour l'état en cas d'erreur
+        system_state.training_state['is_training'] = False
+        system_state.save_training_state()
+
+        socketio.emit('training_error', {
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        })
+
+def run_meta_controller_training(num_episodes: int, batch_size: int):
+    """Exécuter l'entraînement du meta-controller en background"""
+    try:
+        logger.info(f"Démarrage entraînement meta-controller: {num_episodes} épisodes")
+
+        # Charger les données
+        data_pipeline = DataPipeline()
+        train_data, val_data, test_data = data_pipeline.get_processed_data()
+
+        # Utiliser FeaturePipeline avec cache
+        from backend.feature_engineering import FeaturePipeline
+        feature_pipeline = FeaturePipeline()
+        train_features, val_features, test_features = feature_pipeline.run_full_pipeline(
+            train_data, val_data, test_data, force_recalculate=False
+        )
+
+        # Charger les 3 agents SAC pré-entraînés
+        agents = []
+        checkpoint_dir = Path(system_state.config['model']['checkpoint_dir'])
+
+        for i in range(3):
+            sac_config = SACConfig(
+                state_dim=30,
+                action_dim=1,
+                hidden_dims=[256, 256]
+            )
+            agent = SACAgent(config=sac_config, agent_id=i+3)
+
+            # Trouver le dernier checkpoint pour cet agent
+            checkpoints = list(checkpoint_dir.glob(f'checkpoint_*_agent{i+3}.pt'))
+            if checkpoints:
+                latest_checkpoint = max(checkpoints, key=lambda p: p.stat().st_mtime)
+                agent.load(str(latest_checkpoint))
+                logger.info(f"Agent {i+3} chargé depuis: {latest_checkpoint}")
+            else:
+                logger.warning(f"Aucun checkpoint trouvé pour l'agent {i+3}")
+
+            agents.append(agent)
+
+        # Créer le meta-controller
+        meta_controller = EnsembleMetaController(
+            state_dim=30,
+            action_dim=1,
+            num_agents=3
+        )
+
+        # Créer l'environnement
+        eurusd_data = train_data.get('EURUSD')
+        from backend.trading_env import TradingEnvConfig
+        env_config = TradingEnvConfig(
+            initial_capital=system_state.config.get('trading', {}).get('initial_capital', 100000.0)
+        )
+        env = TradingEnvironment(
+            data=eurusd_data,
+            features=train_features,
+            config=env_config
+        )
+
+        # Entraîner le meta-controller
+        for episode in range(num_episodes):
+            if system_state.stop_event.is_set():
+                break
+
+            state = env.reset()
+            episode_reward = 0
+            episode_steps = 0
+            done = False
+
+            while not done:
+                if system_state.stop_event.is_set():
+                    break
+
+                # Obtenir les actions de tous les agents
+                agent_actions = []
+                for agent in agents:
+                    action = agent.select_action(state, deterministic=True)
+                    agent_actions.append(action)
+
+                # Le meta-controller apprend à pondérer les actions
+                final_action = meta_controller.aggregate_actions(state, agent_actions)
+
+                # Step environment
+                next_state, reward, done, info = env.step(final_action)
+
+                # Entraîner le meta-controller
+                meta_controller.train_step(state, agent_actions, reward, next_state, done)
+
+                episode_reward += reward
+                episode_steps += 1
+                state = next_state
+
+            # Calculer métriques de l'épisode
+            env_metrics = env.get_episode_metrics()
+
+            # Mettre à jour l'état du training
+            system_state.training_state['current_episode'] = episode + 1
+            system_state.training_state['metrics'] = {
+                'agent_id': 'meta_controller',
+                'episode_reward': float(episode_reward),
+                'episode_steps': episode_steps,
+                'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
+                'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
+                'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
+                'win_rate': float(env_metrics.get('win_rate', 0)),
+                'profit_factor': float(env_metrics.get('profit_factor', 0)),
+                'total_return': float(env_metrics.get('total_return', 0))
+            }
+
+            # Émettre progression toutes les 5 épisodes
+            if episode % 5 == 0:
+                system_state.save_training_state()
+                socketio.emit('training_progress', {
+                    'episode': episode + 1,
+                    'total_episodes': num_episodes,
+                    'agent': 'meta_controller',
+                    'reward': float(episode_reward),
+                    'steps': episode_steps,
+                    'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
+                    'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
+                    'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
+                    'win_rate': float(env_metrics.get('win_rate', 0)),
+                    'profit_factor': float(env_metrics.get('profit_factor', 0)),
+                    'total_return': float(env_metrics.get('total_return', 0)),
+                    'timestamp': datetime.now().isoformat()
+                })
+
+            # Sauvegarder checkpoint tous les 50 épisodes
+            if episode % 50 == 0 and episode > 0:
+                checkpoint_path = checkpoint_dir / f'meta_controller_ep{episode}.pt'
+                meta_controller.save(str(checkpoint_path))
+                logger.info(f"Meta-controller checkpoint sauvegardé: {checkpoint_path}")
+
+        logger.info("Entraînement meta-controller terminé")
+        system_state.is_training = False
+        system_state.stop_event.clear()
+
+        # Mettre à jour l'état final
+        system_state.training_state['is_training'] = False
+        system_state.save_training_state()
+
+        socketio.emit('training_complete', {
+            'message': 'Entraînement meta-controller terminé avec succès',
+            'agent_id': 'meta_controller',
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Erreur pendant l'entraînement meta-controller: {e}")
+        logger.error(traceback.format_exc())
+        system_state.is_training = False
+        system_state.stop_event.clear()
+
+        # Mettre à jour l'état en cas d'erreur
+        system_state.training_state['is_training'] = False
+        system_state.save_training_state()
+
         socketio.emit('training_error', {
             'error': str(e),
             'timestamp': datetime.now().isoformat()

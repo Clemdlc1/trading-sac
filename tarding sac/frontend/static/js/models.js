@@ -11,7 +11,9 @@ const modelsState = {
     production: [],
     isTraining: false,
     currentEpisode: 0,
-    totalEpisodes: 0
+    totalEpisodes: 0,
+    currentAgent: null,
+    trainingType: null
 };
 
 // ============================================================================
@@ -20,12 +22,15 @@ const modelsState = {
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Page models initialisée');
-    
+
     // Charger les modèles disponibles
     loadModels();
-    
+
     // Setup event listeners
     setupEventListeners();
+
+    // Charger l'état du training si en cours
+    loadTrainingState();
 });
 
 // ============================================================================
@@ -267,24 +272,68 @@ function showModelDetails(modelPath) {
 // ============================================================================
 
 function setupEventListeners() {
-    // Formulaire d'entraînement
+    // Formulaire d'entraînement SAC
     document.getElementById('training-form').addEventListener('submit', async function(e) {
         e.preventDefault();
-        
+
         const numEpisodes = parseInt(document.getElementById('num-episodes').value);
         const batchSize = parseInt(document.getElementById('batch-size').value);
         const fromCheckpoint = document.getElementById('from-checkpoint').value;
-        
-        await startTraining(numEpisodes, batchSize, fromCheckpoint);
+        const agentId = document.getElementById('agent-select').value;
+
+        await startTraining(numEpisodes, batchSize, fromCheckpoint, agentId ? parseInt(agentId) : null);
     });
-    
+
+    // Bouton entraînement meta-controller
+    document.getElementById('btn-train-meta').addEventListener('click', async function() {
+        const numEpisodes = parseInt(document.getElementById('num-episodes').value) || 500;
+        const batchSize = parseInt(document.getElementById('batch-size').value) || 256;
+
+        if (confirm('Entraîner le meta-controller ? Assurez-vous que les 3 agents SAC sont déjà entraînés.')) {
+            await startMetaControllerTraining(numEpisodes, batchSize);
+        }
+    });
+
     // Bouton arrêt entraînement
     document.getElementById('btn-stop-training').addEventListener('click', async function() {
         await stopTraining();
     });
 }
 
-async function startTraining(numEpisodes, batchSize, fromCheckpoint) {
+async function loadTrainingState() {
+    try {
+        const response = await fetch('/api/status');
+        const status = await response.json();
+
+        if (status.training_state && status.training_state.is_training) {
+            // Un entraînement est en cours
+            modelsState.isTraining = true;
+            modelsState.currentEpisode = status.training_state.current_episode || 0;
+            modelsState.totalEpisodes = status.training_state.total_episodes || 1000;
+            modelsState.currentAgent = status.training_state.current_agent;
+            modelsState.trainingType = status.training_state.training_type;
+
+            // Afficher la barre de progression
+            showTrainingProgress();
+
+            // Mettre à jour les métriques si disponibles
+            if (status.training_state.metrics) {
+                updateTrainingProgress({
+                    episode: modelsState.currentEpisode,
+                    total_episodes: modelsState.totalEpisodes,
+                    agent: modelsState.currentAgent,
+                    ...status.training_state.metrics
+                });
+            }
+
+            console.log('État du training restauré:', status.training_state);
+        }
+    } catch (error) {
+        console.error('Erreur chargement état training:', error);
+    }
+}
+
+async function startTraining(numEpisodes, batchSize, fromCheckpoint, agentId) {
     try {
         const response = await fetch('/api/training/start', {
             method: 'POST',
@@ -294,15 +343,18 @@ async function startTraining(numEpisodes, batchSize, fromCheckpoint) {
             body: JSON.stringify({
                 num_episodes: numEpisodes,
                 batch_size: batchSize,
-                from_checkpoint: fromCheckpoint || null
+                from_checkpoint: fromCheckpoint || null,
+                agent_id: agentId || null
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             modelsState.isTraining = true;
             modelsState.totalEpisodes = numEpisodes;
+            modelsState.currentAgent = agentId || 'all';
+            modelsState.trainingType = 'sac_agent';
             showTrainingProgress();
             showNotification('Succès', data.message, 'success');
         } else {
@@ -311,6 +363,37 @@ async function startTraining(numEpisodes, batchSize, fromCheckpoint) {
     } catch (error) {
         console.error('Erreur démarrage entraînement:', error);
         showNotification('Erreur', 'Impossible de démarrer l\'entraînement', 'danger');
+    }
+}
+
+async function startMetaControllerTraining(numEpisodes, batchSize) {
+    try {
+        const response = await fetch('/api/training/meta-controller/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                num_episodes: numEpisodes,
+                batch_size: batchSize
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            modelsState.isTraining = true;
+            modelsState.totalEpisodes = numEpisodes;
+            modelsState.currentAgent = 'meta_controller';
+            modelsState.trainingType = 'meta_controller';
+            showTrainingProgress();
+            showNotification('Succès', data.message, 'success');
+        } else {
+            showNotification('Erreur', data.error, 'danger');
+        }
+    } catch (error) {
+        console.error('Erreur démarrage entraînement meta-controller:', error);
+        showNotification('Erreur', 'Impossible de démarrer l\'entraînement du meta-controller', 'danger');
     }
 }
 
@@ -353,14 +436,37 @@ function hideTrainingProgress() {
 
 function updateTrainingProgress(data) {
     modelsState.currentEpisode = data.episode;
-    
+    if (data.total_episodes) {
+        modelsState.totalEpisodes = data.total_episodes;
+    }
+
     const percentage = (data.episode / modelsState.totalEpisodes) * 100;
     const progressBar = document.getElementById('progress-bar');
     progressBar.style.width = percentage + '%';
     progressBar.textContent = Math.round(percentage) + '%';
-    
+
     const info = document.getElementById('training-info');
-    info.textContent = `Épisode ${data.episode}/${modelsState.totalEpisodes} - Reward: ${data.reward.toFixed(2)}`;
+    const agentText = data.agent !== undefined ? `Agent: ${data.agent}` : 'Agent: N/A';
+    info.textContent = `Épisode ${data.episode}/${modelsState.totalEpisodes} - ${agentText}`;
+
+    // Mettre à jour les métriques détaillées
+    document.getElementById('metric-reward').textContent = (data.reward || 0).toFixed(2);
+    document.getElementById('metric-steps').textContent = data.steps || 0;
+    document.getElementById('metric-sharpe').textContent = (data.sharpe_ratio || 0).toFixed(3);
+    document.getElementById('metric-winrate').textContent = ((data.win_rate || 0) * 100).toFixed(1) + '%';
+    document.getElementById('metric-sortino').textContent = (data.sortino_ratio || 0).toFixed(3);
+    document.getElementById('metric-dd').textContent = ((data.max_drawdown || 0) * 100).toFixed(2) + '%';
+    document.getElementById('metric-pf').textContent = (data.profit_factor || 0).toFixed(2);
+    document.getElementById('metric-return').textContent = ((data.total_return || 0) * 100).toFixed(2) + '%';
+
+    // Afficher les loss si disponibles (SAC agent uniquement)
+    if (data.critic_loss !== undefined || data.actor_loss !== undefined) {
+        document.getElementById('loss-metrics').style.display = 'block';
+        document.getElementById('metric-critic-loss').textContent = (data.critic_loss || 0).toFixed(4);
+        document.getElementById('metric-actor-loss').textContent = (data.actor_loss || 0).toFixed(4);
+    } else {
+        document.getElementById('loss-metrics').style.display = 'none';
+    }
 }
 
 // ============================================================================
