@@ -684,7 +684,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 action_dim=1,
                 hidden_dims=[256, 256]
             )
-            agent = SACAgent(config=sac_config, agent_id=i+1)
+            # Use agent_id >= 3 to avoid regime feature requirements for agents 1 & 2
+            # (agents 1 & 2 expect state_dim=32 with HMM regime features)
+            agent = SACAgent(config=sac_config, agent_id=i+3)
 
             # Charger depuis checkpoint si spécifié
             if from_checkpoint:
