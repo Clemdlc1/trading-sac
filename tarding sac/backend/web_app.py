@@ -713,10 +713,10 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     
                     # Step environment
                     next_state, reward, done, info = env.step(action)
-                    
+
                     # Stocker dans replay buffer
-                    agent.store_transition(state, action, reward, next_state, done)
-                    
+                    agent.replay_buffer.push(state, action, reward, next_state, done)
+
                     # Update agent
                     if len(agent.replay_buffer) > batch_size:
                         agent.update(batch_size)
