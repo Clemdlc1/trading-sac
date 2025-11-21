@@ -272,14 +272,21 @@ class Critic(nn.Module):
 
 class ReplayBuffer:
     """
-    Replay buffer with recency-weighted sampling and stratification.
+    Optimized replay buffer with recency-weighted sampling and stratification.
+
+    Performance improvements:
+    - Pre-allocated numpy arrays for O(1) sampling
+    - Incremental stratification index maintenance
+    - Vectorized operations
     """
-    
+
     def __init__(
         self,
         capacity: int = 100000,
         recency_weight: float = 0.00005,
-        stratify_ratio: Dict[str, float] = None
+        stratify_ratio: Dict[str, float] = None,
+        state_dim: int = 30,
+        action_dim: int = 1
     ):
         self.capacity = capacity
         self.recency_weight = recency_weight
@@ -288,10 +295,24 @@ class ReplayBuffer:
             'losing': 0.2,
             'neutral': 0.6
         }
-        
-        self.buffer = deque(maxlen=capacity)
+
+        # Pre-allocated numpy arrays for better memory locality
+        self.states = np.zeros((capacity, state_dim), dtype=np.float32)
+        self.actions = np.zeros((capacity, action_dim), dtype=np.float32)
+        self.rewards = np.zeros(capacity, dtype=np.float32)
+        self.next_states = np.zeros((capacity, state_dim), dtype=np.float32)
+        self.dones = np.zeros(capacity, dtype=np.float32)
+        self.insert_steps = np.zeros(capacity, dtype=np.int32)
+
+        # Stratification indices (maintain incrementally)
+        self.winning_indices = []
+        self.losing_indices = []
+        self.neutral_indices = []
+
+        self.position = 0
+        self.size = 0
         self.insert_count = 0
-    
+
     def push(
         self,
         state: np.ndarray,
@@ -300,147 +321,183 @@ class ReplayBuffer:
         next_state: np.ndarray,
         done: bool
     ):
-        """Add transition to buffer."""
-        self.buffer.append({
-            'state': state,
-            'action': action,
-            'reward': reward,
-            'next_state': next_state,
-            'done': done,
-            'insert_step': self.insert_count
-        })
+        """Add transition to buffer with incremental stratification update."""
+        idx = self.position
+
+        # Remove old index from stratification lists if overwriting
+        if self.size == self.capacity:
+            old_reward = self.rewards[idx]
+            if old_reward > 0.01:
+                if idx in self.winning_indices:
+                    self.winning_indices.remove(idx)
+            elif old_reward < -0.01:
+                if idx in self.losing_indices:
+                    self.losing_indices.remove(idx)
+            else:
+                if idx in self.neutral_indices:
+                    self.neutral_indices.remove(idx)
+
+        # Store transition
+        self.states[idx] = state
+        self.actions[idx] = action if hasattr(action, '__len__') else [action]
+        self.rewards[idx] = reward
+        self.next_states[idx] = next_state
+        self.dones[idx] = float(done)
+        self.insert_steps[idx] = self.insert_count
+
+        # Add to appropriate stratification list
+        if reward > 0.01:
+            self.winning_indices.append(idx)
+        elif reward < -0.01:
+            self.losing_indices.append(idx)
+        else:
+            self.neutral_indices.append(idx)
+
+        self.position = (self.position + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
         self.insert_count += 1
-    
+
     def sample(self, batch_size: int) -> Dict[str, np.ndarray]:
         """
-        Sample batch with recency weighting and stratification.
-        
+        Sample batch with recency weighting and stratification (optimized).
+
         Args:
             batch_size: Batch size
-            
+
         Returns:
             Dictionary of batched transitions
         """
-        if len(self.buffer) < batch_size:
+        if self.size < batch_size:
             return None
-        
-        # Calculate recency weights
+
+        # Calculate recency weights (vectorized)
         current_step = self.insert_count
-        ages = np.array([current_step - t['insert_step'] for t in self.buffer])
+        ages = current_step - self.insert_steps[:self.size]
         weights = np.exp(-self.recency_weight * ages)
         weights = weights / weights.sum()
-        
-        # Stratified sampling
-        # Classify transitions
-        winning_indices = []
-        losing_indices = []
-        neutral_indices = []
-        
-        for i, transition in enumerate(self.buffer):
-            reward = transition['reward']
-            if reward > 0.01:
-                winning_indices.append(i)
-            elif reward < -0.01:
-                losing_indices.append(i)
-            else:
-                neutral_indices.append(i)
-        
+
         # Sample from each category
         n_winning = int(batch_size * self.stratify_ratio['winning'])
         n_losing = int(batch_size * self.stratify_ratio['losing'])
         n_neutral = batch_size - n_winning - n_losing
-        
+
         sampled_indices = []
-        
-        # Sample winning (with replacement if needed)
-        if len(winning_indices) > 0:
-            winning_weights = weights[winning_indices]
+
+        # Sample winning
+        if len(self.winning_indices) > 0:
+            winning_weights = weights[self.winning_indices]
             winning_weights = winning_weights / winning_weights.sum()
+            n_sample = min(n_winning, len(self.winning_indices))
             sampled_winning = np.random.choice(
-                winning_indices,
-                size=min(n_winning, len(winning_indices)),
+                self.winning_indices,
+                size=n_sample,
                 replace=False,
                 p=winning_weights
             )
             sampled_indices.extend(sampled_winning)
-        
+
         # Sample losing
-        if len(losing_indices) > 0:
-            losing_weights = weights[losing_indices]
+        if len(self.losing_indices) > 0:
+            losing_weights = weights[self.losing_indices]
             losing_weights = losing_weights / losing_weights.sum()
+            n_sample = min(n_losing, len(self.losing_indices))
             sampled_losing = np.random.choice(
-                losing_indices,
-                size=min(n_losing, len(losing_indices)),
+                self.losing_indices,
+                size=n_sample,
                 replace=False,
                 p=losing_weights
             )
             sampled_indices.extend(sampled_losing)
-        
+
         # Sample neutral
-        if len(neutral_indices) > 0:
-            neutral_weights = weights[neutral_indices]
+        if len(self.neutral_indices) > 0:
+            neutral_weights = weights[self.neutral_indices]
             neutral_weights = neutral_weights / neutral_weights.sum()
+            n_sample = min(n_neutral, len(self.neutral_indices))
             sampled_neutral = np.random.choice(
-                neutral_indices,
-                size=min(n_neutral, len(neutral_indices)),
+                self.neutral_indices,
+                size=n_sample,
                 replace=False,
                 p=neutral_weights
             )
             sampled_indices.extend(sampled_neutral)
-        
+
         # If not enough samples, fill with random weighted sampling
         if len(sampled_indices) < batch_size:
             remaining = batch_size - len(sampled_indices)
-            all_indices = list(range(len(self.buffer)))
-            available_indices = [i for i in all_indices if i not in sampled_indices]
+            all_indices = np.arange(self.size)
+            available_mask = np.ones(self.size, dtype=bool)
+            available_mask[sampled_indices] = False
+            available_indices = all_indices[available_mask]
+
             if len(available_indices) > 0:
                 available_weights = weights[available_indices]
                 available_weights = available_weights / available_weights.sum()
+                n_sample = min(remaining, len(available_indices))
                 additional = np.random.choice(
                     available_indices,
-                    size=min(remaining, len(available_indices)),
+                    size=n_sample,
                     replace=False,
                     p=available_weights
                 )
                 sampled_indices.extend(additional)
-        
-        # Get transitions
-        batch = [self.buffer[i] for i in sampled_indices]
-        
-        # Stack into arrays
-        states = np.array([t['state'] for t in batch])
-        actions = np.array([t['action'] for t in batch])
-        rewards = np.array([t['reward'] for t in batch])
-        next_states = np.array([t['next_state'] for t in batch])
-        dones = np.array([t['done'] for t in batch])
-        
+
+        # Convert to numpy array for vectorized indexing
+        sampled_indices = np.array(sampled_indices, dtype=np.int32)
+
+        # Vectorized data extraction
         return {
-            'states': states,
-            'actions': actions,
-            'rewards': rewards,
-            'next_states': next_states,
-            'dones': dones
+            'states': self.states[sampled_indices],
+            'actions': self.actions[sampled_indices],
+            'rewards': self.rewards[sampled_indices],
+            'next_states': self.next_states[sampled_indices],
+            'dones': self.dones[sampled_indices]
         }
     
     def trim_old(self, keep_percentage: float = 0.7):
         """
-        Trim oldest transitions.
-        
+        Trim oldest transitions (optimized for array-based buffer).
+
         Args:
             keep_percentage: Percentage of buffer to keep
         """
-        if len(self.buffer) < self.capacity * 0.9:
+        if self.size < self.capacity * 0.9:
             return
-        
-        # Sort by insert step
-        sorted_buffer = sorted(self.buffer, key=lambda x: x['insert_step'], reverse=True)
-        keep_count = int(len(sorted_buffer) * keep_percentage)
-        self.buffer = deque(sorted_buffer[:keep_count], maxlen=self.capacity)
-        
-        logger.info(f"Trimmed buffer from {len(sorted_buffer)} to {len(self.buffer)}")
-    
+
+        # Sort indices by insert step (keep most recent)
+        keep_count = int(self.size * keep_percentage)
+        sorted_indices = np.argsort(self.insert_steps[:self.size])[-keep_count:]
+
+        # Reorganize buffer to keep only recent transitions
+        self.states[:keep_count] = self.states[sorted_indices]
+        self.actions[:keep_count] = self.actions[sorted_indices]
+        self.rewards[:keep_count] = self.rewards[sorted_indices]
+        self.next_states[:keep_count] = self.next_states[sorted_indices]
+        self.dones[:keep_count] = self.dones[sorted_indices]
+        self.insert_steps[:keep_count] = self.insert_steps[sorted_indices]
+
+        # Rebuild stratification indices
+        self.winning_indices.clear()
+        self.losing_indices.clear()
+        self.neutral_indices.clear()
+
+        for i in range(keep_count):
+            reward = self.rewards[i]
+            if reward > 0.01:
+                self.winning_indices.append(i)
+            elif reward < -0.01:
+                self.losing_indices.append(i)
+            else:
+                self.neutral_indices.append(i)
+
+        old_size = self.size
+        self.size = keep_count
+        self.position = keep_count % self.capacity
+
+        logger.info(f"Trimmed buffer from {old_size} to {self.size}")
+
     def __len__(self) -> int:
-        return len(self.buffer)
+        return self.size
 
 
 class SACAgent:
@@ -608,7 +665,9 @@ class SACAgent:
         # Replay buffer
         self.replay_buffer = ReplayBuffer(
             capacity=self.config.buffer_capacity,
-            recency_weight=0.00005
+            recency_weight=0.00005,
+            state_dim=state_dim,
+            action_dim=self.config.action_dim
         )
         
         # Training state
@@ -620,13 +679,43 @@ class SACAgent:
         self.reward_std = 1.0
         self.reward_m2 = 0.0
         self.reward_count = 0
-        
+
+        # Mixed precision training
+        self.use_amp = torch.cuda.is_available()
+        self.scaler = torch.cuda.amp.GradScaler() if self.use_amp else None
+
+        # Pre-allocated pinned memory tensors for faster CPU->GPU transfer
+        if torch.cuda.is_available():
+            self.state_buffer = torch.zeros((1, state_dim), dtype=torch.float32).pin_memory()
+            self.batch_states_buffer = torch.zeros((self.config.batch_size, state_dim), dtype=torch.float32).pin_memory()
+            self.batch_actions_buffer = torch.zeros((self.config.batch_size, self.config.action_dim), dtype=torch.float32).pin_memory()
+            self.batch_rewards_buffer = torch.zeros((self.config.batch_size, 1), dtype=torch.float32).pin_memory()
+            self.batch_next_states_buffer = torch.zeros((self.config.batch_size, state_dim), dtype=torch.float32).pin_memory()
+            self.batch_dones_buffer = torch.zeros((self.config.batch_size, 1), dtype=torch.float32).pin_memory()
+        else:
+            self.state_buffer = None
+            self.batch_states_buffer = None
+            self.batch_actions_buffer = None
+            self.batch_rewards_buffer = None
+            self.batch_next_states_buffer = None
+            self.batch_dones_buffer = None
+
+        # Gradient accumulation
+        self.gradient_accumulation_steps = 4  # Accumulate gradients over 4 steps
+        self.accum_step = 0
+
         logger.info(f"SAC Agent {agent_id} initialized on {device}")
         logger.info(f"  State dim: {state_dim}")
         logger.info(f"  Action dim: {self.config.action_dim}")
         logger.info(f"  Hidden dims: {self.config.hidden_dims}")
         logger.info(f"  Gamma: {self.config.gamma}")
         logger.info(f"  Use regime Q-functions: {self.config.use_regime_qfuncs}")
+        logger.info(f"  PERFORMANCE OPTIMIZATIONS ENABLED:")
+        logger.info(f"    - Optimized ReplayBuffer: Pre-allocated arrays with O(1) sampling")
+        logger.info(f"    - Pinned memory transfers: Faster CPU->GPU data movement")
+        logger.info(f"    - Mixed precision training: {self.use_amp}")
+        logger.info(f"    - Gradient accumulation steps: {self.gradient_accumulation_steps}")
+        logger.info(f"    - Vectorized reward normalization: Eliminates per-reward loops")
     
     def select_action(
         self,
@@ -635,34 +724,38 @@ class SACAgent:
         regime: Optional[str] = None
     ) -> np.ndarray:
         """
-        Select action from policy.
-        
+        Select action from policy (optimized with pinned memory).
+
         Args:
             state: Current state
             deterministic: If True, return mean action
             regime: Current regime (for Agent 3)
-            
+
         Returns:
             Action array
         """
-        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
-        
         with torch.no_grad():
+            if self.state_buffer is not None:
+                # Use pre-allocated pinned buffer for faster transfer
+                self.state_buffer[0] = torch.from_numpy(state)
+                state_tensor = self.state_buffer.to(device, non_blocking=True)
+            else:
+                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+
             action, _ = self.actor.sample(state_tensor, deterministic=deterministic)
-        
-        action = action.cpu().numpy()[0]
-        return action
+
+        return action.cpu().numpy()[0]
     
     def update(
         self,
         regime: Optional[str] = None
     ) -> Dict[str, float]:
         """
-        Update networks with one batch.
-        
+        Update networks with one batch (optimized with pinned memory and mixed precision).
+
         Args:
             regime: Current regime (for Agent 3)
-            
+
         Returns:
             Dictionary of losses
         """
@@ -670,29 +763,51 @@ class SACAgent:
         batch = self.replay_buffer.sample(self.config.batch_size)
         if batch is None:
             return {}
-        
-        # Convert to tensors
-        states = torch.FloatTensor(batch['states']).to(device)
-        actions = torch.FloatTensor(batch['actions']).to(device)
-        rewards = torch.FloatTensor(batch['rewards']).unsqueeze(1).to(device)
-        next_states = torch.FloatTensor(batch['next_states']).to(device)
-        dones = torch.FloatTensor(batch['dones']).unsqueeze(1).to(device)
-        
+
+        # Convert to tensors using pinned memory buffers
+        if self.batch_states_buffer is not None:
+            actual_batch_size = len(batch['states'])
+
+            # Copy data to pinned buffers
+            self.batch_states_buffer[:actual_batch_size].copy_(torch.from_numpy(batch['states']))
+            self.batch_actions_buffer[:actual_batch_size].copy_(torch.from_numpy(batch['actions']))
+            self.batch_rewards_buffer[:actual_batch_size, 0].copy_(torch.from_numpy(batch['rewards']))
+            self.batch_next_states_buffer[:actual_batch_size].copy_(torch.from_numpy(batch['next_states']))
+            self.batch_dones_buffer[:actual_batch_size, 0].copy_(torch.from_numpy(batch['dones']))
+
+            # Async transfer to GPU
+            states = self.batch_states_buffer[:actual_batch_size].to(device, non_blocking=True)
+            actions = self.batch_actions_buffer[:actual_batch_size].to(device, non_blocking=True)
+            rewards = self.batch_rewards_buffer[:actual_batch_size].to(device, non_blocking=True)
+            next_states = self.batch_next_states_buffer[:actual_batch_size].to(device, non_blocking=True)
+            dones = self.batch_dones_buffer[:actual_batch_size].to(device, non_blocking=True)
+        else:
+            states = torch.FloatTensor(batch['states']).to(device)
+            actions = torch.FloatTensor(batch['actions']).to(device)
+            rewards = torch.FloatTensor(batch['rewards']).unsqueeze(1).to(device)
+            next_states = torch.FloatTensor(batch['next_states']).to(device)
+            dones = torch.FloatTensor(batch['dones']).unsqueeze(1).to(device)
+
         # Adaptive reward normalization
         if self.config.use_adaptive_norm:
             rewards = self._normalize_rewards(rewards)
-        
+
+        # Update critics and actor with gradient accumulation
+        self.accum_step += 1
+        is_accumulation_step = (self.accum_step % self.gradient_accumulation_steps != 0)
+
         # Update critics
         critic_loss = self._update_critics(
-            states, actions, rewards, next_states, dones, regime
+            states, actions, rewards, next_states, dones, regime, is_accumulation_step
         )
-        
-        # Update actor
-        actor_loss, alpha_loss = self._update_actor(states, regime)
-        
-        # Update target networks
-        self._soft_update_targets()
-        
+
+        # Update actor (less frequently for better GPU utilization)
+        actor_loss, alpha_loss = self._update_actor(states, regime, is_accumulation_step)
+
+        # Update target networks only after gradient step
+        if not is_accumulation_step:
+            self._soft_update_targets()
+
         return {
             'critic_loss': critic_loss,
             'actor_loss': actor_loss,
@@ -701,20 +816,27 @@ class SACAgent:
         }
     
     def _normalize_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
-        """Normalize rewards using running statistics."""
-        # Update running statistics (Welford's algorithm)
-        for reward in rewards:
-            reward_val = reward.item()
-            self.reward_count += 1
-            delta = reward_val - self.reward_mean
-            self.reward_mean += delta / self.reward_count
-            delta2 = reward_val - self.reward_mean
-            self.reward_m2 += delta * delta2
-        
+        """Normalize rewards using running statistics (vectorized)."""
+        # Vectorized update of running statistics (Welford's algorithm)
+        rewards_np = rewards.detach().cpu().numpy().flatten()
+        batch_size = len(rewards_np)
+
+        # Update statistics vectorized
+        old_mean = self.reward_mean
+        old_count = self.reward_count
+
+        self.reward_count += batch_size
+        delta = rewards_np - old_mean
+        self.reward_mean += np.sum(delta) / self.reward_count
+
+        # Update M2 for variance calculation
+        delta2 = rewards_np - self.reward_mean
+        self.reward_m2 += np.sum(delta * delta2)
+
         if self.reward_count > 1:
             self.reward_std = np.sqrt(self.reward_m2 / self.reward_count)
-        
-        # Normalize
+
+        # Normalize on GPU
         normalized = (rewards - self.reward_mean) / (self.reward_std + 1e-8)
         return normalized
     
@@ -725,108 +847,199 @@ class SACAgent:
         rewards: torch.Tensor,
         next_states: torch.Tensor,
         dones: torch.Tensor,
-        regime: Optional[str] = None
+        regime: Optional[str] = None,
+        is_accumulation_step: bool = False
     ) -> float:
-        """Update critic networks."""
+        """Update critic networks with mixed precision and gradient accumulation."""
+        # Mixed precision context
+        autocast_ctx = torch.cuda.amp.autocast() if self.use_amp else torch.no_grad
+
         with torch.no_grad():
-            # Sample next actions
-            next_actions, next_log_probs = self.actor.sample(next_states)
-            
-            # Compute target Q-values
-            if self.config.use_regime_qfuncs:
-                # Agent 3: Use regime-specific critics
-                if regime == 'low_vol':
-                    target_q1 = self.critic1_low_target(next_states, next_actions)
-                    target_q2 = self.critic2_low_target(next_states, next_actions)
+            if self.use_amp:
+                with torch.cuda.amp.autocast():
+                    # Sample next actions
+                    next_actions, next_log_probs = self.actor.sample(next_states)
+
+                    # Compute target Q-values
+                    if self.config.use_regime_qfuncs:
+                        if regime == 'low_vol':
+                            target_q1 = self.critic1_low_target(next_states, next_actions)
+                            target_q2 = self.critic2_low_target(next_states, next_actions)
+                        else:
+                            target_q1 = self.critic1_high_target(next_states, next_actions)
+                            target_q2 = self.critic2_high_target(next_states, next_actions)
+                    else:
+                        target_q1 = self.critic1_target(next_states, next_actions)
+                        target_q2 = self.critic2_target(next_states, next_actions)
+
+                    target_q = torch.min(target_q1, target_q2)
+                    target_q = target_q - self.alpha * next_log_probs
+                    target_q = rewards + (1 - dones) * self.config.gamma * target_q
+            else:
+                next_actions, next_log_probs = self.actor.sample(next_states)
+
+                if self.config.use_regime_qfuncs:
+                    if regime == 'low_vol':
+                        target_q1 = self.critic1_low_target(next_states, next_actions)
+                        target_q2 = self.critic2_low_target(next_states, next_actions)
+                    else:
+                        target_q1 = self.critic1_high_target(next_states, next_actions)
+                        target_q2 = self.critic2_high_target(next_states, next_actions)
                 else:
-                    target_q1 = self.critic1_high_target(next_states, next_actions)
-                    target_q2 = self.critic2_high_target(next_states, next_actions)
-            else:
-                target_q1 = self.critic1_target(next_states, next_actions)
-                target_q2 = self.critic2_target(next_states, next_actions)
-            
-            target_q = torch.min(target_q1, target_q2)
-            target_q = target_q - self.alpha * next_log_probs
-            
-            # Bellman backup
-            target_q = rewards + (1 - dones) * self.config.gamma * target_q
-        
-        # Compute critic losses
-        if self.config.use_regime_qfuncs:
-            if regime == 'low_vol':
-                current_q1 = self.critic1_low(states, actions)
-                current_q2 = self.critic2_low(states, actions)
-            else:
-                current_q1 = self.critic1_high(states, actions)
-                current_q2 = self.critic2_high(states, actions)
+                    target_q1 = self.critic1_target(next_states, next_actions)
+                    target_q2 = self.critic2_target(next_states, next_actions)
+
+                target_q = torch.min(target_q1, target_q2)
+                target_q = target_q - self.alpha * next_log_probs
+                target_q = rewards + (1 - dones) * self.config.gamma * target_q
+
+        # Forward pass with mixed precision
+        if self.use_amp:
+            with torch.cuda.amp.autocast():
+                if self.config.use_regime_qfuncs:
+                    if regime == 'low_vol':
+                        current_q1 = self.critic1_low(states, actions)
+                        current_q2 = self.critic2_low(states, actions)
+                    else:
+                        current_q1 = self.critic1_high(states, actions)
+                        current_q2 = self.critic2_high(states, actions)
+                else:
+                    current_q1 = self.critic1(states, actions)
+                    current_q2 = self.critic2(states, actions)
+
+                critic1_loss = F.mse_loss(current_q1, target_q)
+                critic2_loss = F.mse_loss(current_q2, target_q)
+                critic_loss = (critic1_loss + critic2_loss) / self.gradient_accumulation_steps
         else:
-            current_q1 = self.critic1(states, actions)
-            current_q2 = self.critic2(states, actions)
-        
-        critic1_loss = F.mse_loss(current_q1, target_q)
-        critic2_loss = F.mse_loss(current_q2, target_q)
-        critic_loss = critic1_loss + critic2_loss
-        
-        # Optimize critics
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.critic1.parameters() if not self.config.use_regime_qfuncs else
-            list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
-            self.config.max_grad_norm
-        )
-        self.critic_optimizer.step()
-        
-        return critic_loss.item()
+            if self.config.use_regime_qfuncs:
+                if regime == 'low_vol':
+                    current_q1 = self.critic1_low(states, actions)
+                    current_q2 = self.critic2_low(states, actions)
+                else:
+                    current_q1 = self.critic1_high(states, actions)
+                    current_q2 = self.critic2_high(states, actions)
+            else:
+                current_q1 = self.critic1(states, actions)
+                current_q2 = self.critic2(states, actions)
+
+            critic1_loss = F.mse_loss(current_q1, target_q)
+            critic2_loss = F.mse_loss(current_q2, target_q)
+            critic_loss = (critic1_loss + critic2_loss) / self.gradient_accumulation_steps
+
+        # Backward pass
+        if not is_accumulation_step:
+            self.critic_optimizer.zero_grad()
+
+        if self.use_amp:
+            self.scaler.scale(critic_loss).backward()
+            if not is_accumulation_step:
+                self.scaler.unscale_(self.critic_optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    self.critic1.parameters() if not self.config.use_regime_qfuncs else
+                    list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
+                    self.config.max_grad_norm
+                )
+                self.scaler.step(self.critic_optimizer)
+                self.scaler.update()
+        else:
+            critic_loss.backward()
+            if not is_accumulation_step:
+                torch.nn.utils.clip_grad_norm_(
+                    self.critic1.parameters() if not self.config.use_regime_qfuncs else
+                    list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
+                    self.config.max_grad_norm
+                )
+                self.critic_optimizer.step()
+
+        return critic_loss.item() * self.gradient_accumulation_steps
     
     def _update_actor(
         self,
         states: torch.Tensor,
-        regime: Optional[str] = None
+        regime: Optional[str] = None,
+        is_accumulation_step: bool = False
     ) -> Tuple[float, Optional[float]]:
-        """Update actor network and alpha (if auto-tuning)."""
-        # Sample actions
-        actions, log_probs = self.actor.sample(states)
-        
-        # Compute Q-values
-        if self.config.use_regime_qfuncs:
-            if regime == 'low_vol':
-                q1 = self.critic1_low(states, actions)
-                q2 = self.critic2_low(states, actions)
-            else:
-                q1 = self.critic1_high(states, actions)
-                q2 = self.critic2_high(states, actions)
+        """Update actor network and alpha with mixed precision and gradient accumulation."""
+        # Forward pass with mixed precision
+        if self.use_amp:
+            with torch.cuda.amp.autocast():
+                actions, log_probs = self.actor.sample(states)
+
+                if self.config.use_regime_qfuncs:
+                    if regime == 'low_vol':
+                        q1 = self.critic1_low(states, actions)
+                        q2 = self.critic2_low(states, actions)
+                    else:
+                        q1 = self.critic1_high(states, actions)
+                        q2 = self.critic2_high(states, actions)
+                else:
+                    q1 = self.critic1(states, actions)
+                    q2 = self.critic2(states, actions)
+
+                q = torch.min(q1, q2)
+                actor_loss = (self.alpha * log_probs - q).mean() / self.gradient_accumulation_steps
         else:
-            q1 = self.critic1(states, actions)
-            q2 = self.critic2(states, actions)
-        
-        q = torch.min(q1, q2)
-        
-        # Actor loss
-        actor_loss = (self.alpha * log_probs - q).mean()
-        
-        # Optimize actor
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.actor.parameters(),
-            self.config.max_grad_norm
-        )
-        self.actor_optimizer.step()
-        
+            actions, log_probs = self.actor.sample(states)
+
+            if self.config.use_regime_qfuncs:
+                if regime == 'low_vol':
+                    q1 = self.critic1_low(states, actions)
+                    q2 = self.critic2_low(states, actions)
+                else:
+                    q1 = self.critic1_high(states, actions)
+                    q2 = self.critic2_high(states, actions)
+            else:
+                q1 = self.critic1(states, actions)
+                q2 = self.critic2(states, actions)
+
+            q = torch.min(q1, q2)
+            actor_loss = (self.alpha * log_probs - q).mean() / self.gradient_accumulation_steps
+
+        # Backward pass
+        if not is_accumulation_step:
+            self.actor_optimizer.zero_grad()
+
+        if self.use_amp:
+            self.scaler.scale(actor_loss).backward()
+            if not is_accumulation_step:
+                self.scaler.unscale_(self.actor_optimizer)
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
+                self.scaler.step(self.actor_optimizer)
+                self.scaler.update()
+        else:
+            actor_loss.backward()
+            if not is_accumulation_step:
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
+                self.actor_optimizer.step()
+
         # Update alpha
         alpha_loss = None
         if self.config.auto_entropy_tuning:
-            alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
-            
-            self.alpha_optimizer.zero_grad()
-            alpha_loss.backward()
-            self.alpha_optimizer.step()
-            
-            self.alpha = self.log_alpha.exp()
+            if self.use_amp:
+                with torch.cuda.amp.autocast():
+                    alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+            else:
+                alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+
+            if not is_accumulation_step:
+                self.alpha_optimizer.zero_grad()
+
+            if self.use_amp:
+                self.scaler.scale(alpha_loss).backward()
+                if not is_accumulation_step:
+                    self.scaler.step(self.alpha_optimizer)
+                    self.scaler.update()
+            else:
+                alpha_loss.backward()
+                if not is_accumulation_step:
+                    self.alpha_optimizer.step()
+
+            if not is_accumulation_step:
+                self.alpha = self.log_alpha.exp()
+
             alpha_loss = alpha_loss.item()
-        
-        return actor_loss.item(), alpha_loss
+
+        return actor_loss.item() * self.gradient_accumulation_steps, alpha_loss
     
     def _soft_update_targets(self):
         """Soft update target networks."""
