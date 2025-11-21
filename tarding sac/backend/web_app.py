@@ -932,8 +932,10 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 episode_reward = 0
                 episode_steps = 0
                 done = False
-                critic_losses = []
-                actor_losses = []
+                # Utiliser moyenne courante au lieu d'accumuler toutes les pertes (économie mémoire)
+                critic_loss_sum = 0.0
+                actor_loss_sum = 0.0
+                update_count = 0
 
                 # Capturer la date de début d'épisode
                 episode_start_time = datetime.now()
@@ -979,8 +981,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                         for _ in range(4):
                             losses = agent.update()
                             if losses:
-                                critic_losses.append(losses.get('critic_loss', 0))
-                                actor_losses.append(losses.get('actor_loss', 0))
+                                critic_loss_sum += losses.get('critic_loss', 0)
+                                actor_loss_sum += losses.get('actor_loss', 0)
+                                update_count += 1
 
                     episode_reward += reward
                     episode_steps += 1
@@ -1010,8 +1013,8 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'agent_id': current_agent_id,
                     'episode_reward': float(episode_reward),
                     'episode_steps': episode_steps,
-                    'avg_critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
-                    'avg_actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
+                    'avg_critic_loss': float(critic_loss_sum / update_count) if update_count > 0 else 0,
+                    'avg_actor_loss': float(actor_loss_sum / update_count) if update_count > 0 else 0,
                     'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
                     'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
                     'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
@@ -1020,13 +1023,18 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'total_return': float(env_metrics.get('total_return', 0))
                 }
 
-                # Ajouter à l'historique
+                # Ajouter à l'historique (limité à 200 derniers épisodes pour éviter accumulation mémoire)
                 metrics_history['episodes'].append(episode + 1)
                 metrics_history['rewards'].append(float(episode_reward))
                 metrics_history['sharpe_ratios'].append(float(env_metrics.get('sharpe_ratio', 0)))
                 metrics_history['win_rates'].append(float(env_metrics.get('win_rate', 0)))
                 metrics_history['max_drawdowns'].append(float(env_metrics.get('max_drawdown', 0)))
                 metrics_history['total_returns'].append(float(env_metrics.get('total_return', 0)))
+
+                # Limiter l'historique stocké aux 200 derniers épisodes
+                if len(metrics_history['episodes']) > 200:
+                    for key in metrics_history.keys():
+                        metrics_history[key] = metrics_history[key][-200:]
 
                 # Sauvegarder l'état seulement tous les 10 épisodes (optimisation performance)
                 if episode % 10 == 0:
