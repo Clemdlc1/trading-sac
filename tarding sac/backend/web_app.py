@@ -739,7 +739,26 @@ def handle_update_request():
 def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[str], agent_id: Optional[int] = None):
     """Exécuter l'entraînement en background"""
     try:
+        # Afficher les informations du device
+        cuda_available = torch.cuda.is_available()
+        device_name = str(torch.cuda.get_device_name(0)) if cuda_available else 'CPU'
+
+        logger.info("="*80)
         logger.info(f"Démarrage entraînement: {num_episodes} épisodes, Agent: {agent_id if agent_id is not None else 'tous'}")
+        logger.info(f"Device: {device_name}")
+        if cuda_available:
+            logger.info(f"GPU Count: {torch.cuda.device_count()}")
+            logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        else:
+            logger.warning("⚠️ CUDA non disponible - Entraînement sur CPU (sera plus lent)")
+        logger.info("="*80)
+
+        # Notifier le frontend du device utilisé
+        socketio.emit('training_device_info', {
+            'device': device_name,
+            'cuda_available': cuda_available,
+            'timestamp': datetime.now().isoformat()
+        })
 
         # Charger les données
         data_pipeline = DataPipeline()
@@ -819,11 +838,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             'total_returns': []
         }
 
+        # Logger pour les transitions (pour CSV)
+        transitions_log = []
+
         # Entraîner chaque agent
         for episode in range(num_episodes):
             if system_state.stop_event.is_set():
                 break
-            
+
             for agent_idx, agent in enumerate(agents):
                 state = env.reset()
                 episode_reward = 0
@@ -831,6 +853,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 done = False
                 critic_losses = []
                 actor_losses = []
+
+                # Capturer la date de début d'épisode
+                episode_start_time = datetime.now()
 
                 while not done:
                     if system_state.stop_event.is_set():
@@ -841,6 +866,27 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
                     # Step environment
                     next_state, reward, done, info = env.step(action)
+
+                    # Logger la transition pour le CSV avec les observations
+                    transition_data = {
+                        'episode': episode + 1,
+                        'agent_id': agent_indices[agent_idx] if agent_id is None else agent_id,
+                        'step': episode_steps,
+                        'action': float(action[0]) if hasattr(action, '__len__') else float(action),
+                        'reward': float(reward),
+                        'done': int(done),
+                        'equity': float(info.get('equity', 0)),
+                        'position': float(info.get('position', 0)),
+                        'cumulative_reward': episode_reward + reward,
+                        'episode_start_time': episode_start_time.isoformat()
+                    }
+
+                    # Ajouter les observations (state) - toutes les features
+                    if hasattr(state, '__len__'):
+                        for i, obs_value in enumerate(state):
+                            transition_data[f'obs_{i}'] = float(obs_value)
+
+                    transitions_log.append(transition_data)
 
                     # Stocker dans replay buffer
                     agent.replay_buffer.push(state, action, reward, next_state, done)
@@ -855,6 +901,11 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     episode_reward += reward
                     episode_steps += 1
                     state = next_state
+
+                # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
+                episode_end_time = datetime.now()
+                if len(transitions_log) > 0:
+                    transitions_log[-1]['episode_end_time'] = episode_end_time.isoformat()
 
                 # Calculer métriques de l'épisode
                 env_metrics = env.get_episode_metrics()
@@ -915,6 +966,20 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     filename = f'checkpoint_ep{episode}_agent{current_agent_id}.pt'
                     agent.save(filename)
                     logger.info(f"Checkpoint sauvegardé: {filename}")
+
+                # Sauvegarder les transitions dans un CSV
+                if len(transitions_log) > 0:
+                    import pandas as pd
+                    csv_dir = Path('logs/training_csvs')
+                    csv_dir.mkdir(parents=True, exist_ok=True)
+
+                    df = pd.DataFrame(transitions_log)
+                    csv_filename = csv_dir / f'training_ep{episode}_agent{current_agent_id}.csv'
+                    df.to_csv(csv_filename, index=False)
+                    logger.info(f"Training CSV sauvegardé: {csv_filename} ({len(transitions_log)} transitions)")
+
+                    # Vider le log pour libérer la mémoire
+                    transitions_log.clear()
         
         logger.info("Entraînement terminé")
         system_state.is_training = False
@@ -948,7 +1013,26 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 def run_meta_controller_training(num_episodes: int, batch_size: int):
     """Exécuter l'entraînement du meta-controller en background"""
     try:
+        # Afficher les informations du device
+        cuda_available = torch.cuda.is_available()
+        device_name = str(torch.cuda.get_device_name(0)) if cuda_available else 'CPU'
+
+        logger.info("="*80)
         logger.info(f"Démarrage entraînement meta-controller: {num_episodes} épisodes")
+        logger.info(f"Device: {device_name}")
+        if cuda_available:
+            logger.info(f"GPU Count: {torch.cuda.device_count()}")
+            logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        else:
+            logger.warning("⚠️ CUDA non disponible - Entraînement sur CPU (sera plus lent)")
+        logger.info("="*80)
+
+        # Notifier le frontend du device utilisé
+        socketio.emit('training_device_info', {
+            'device': device_name,
+            'cuda_available': cuda_available,
+            'timestamp': datetime.now().isoformat()
+        })
 
         # Charger les données
         data_pipeline = DataPipeline()
@@ -1007,6 +1091,9 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
             config=env_config
         )
 
+        # Logger pour les transitions (pour CSV)
+        transitions_log = []
+
         # Entraîner le meta-controller
         for episode in range(num_episodes):
             if system_state.stop_event.is_set():
@@ -1016,6 +1103,9 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
             episode_reward = 0
             episode_steps = 0
             done = False
+
+            # Capturer la date de début d'épisode
+            episode_start_time = datetime.now()
 
             while not done:
                 if system_state.stop_event.is_set():
@@ -1033,12 +1123,43 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 # Step environment
                 next_state, reward, done, info = env.step(final_action)
 
+                # Logger la transition pour le CSV avec les observations et actions individuelles
+                transition_data = {
+                    'episode': episode + 1,
+                    'agent_id': 'meta_controller',
+                    'step': episode_steps,
+                    'final_action': float(final_action[0]) if hasattr(final_action, '__len__') else float(final_action),
+                    'reward': float(reward),
+                    'done': int(done),
+                    'equity': float(info.get('equity', 0)),
+                    'position': float(info.get('position', 0)),
+                    'cumulative_reward': episode_reward + reward,
+                    'episode_start_time': episode_start_time.isoformat()
+                }
+
+                # Ajouter les actions des agents individuels
+                for i, agent_action in enumerate(agent_actions):
+                    action_val = float(agent_action[0]) if hasattr(agent_action, '__len__') else float(agent_action)
+                    transition_data[f'agent_{i+3}_action'] = action_val
+
+                # Ajouter les observations (state)
+                if hasattr(state, '__len__'):
+                    for i, obs_value in enumerate(state):
+                        transition_data[f'obs_{i}'] = float(obs_value)
+
+                transitions_log.append(transition_data)
+
                 # Entraîner le meta-controller
                 meta_controller.train_step(state, agent_actions, reward, next_state, done)
 
                 episode_reward += reward
                 episode_steps += 1
                 state = next_state
+
+            # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
+            episode_end_time = datetime.now()
+            if len(transitions_log) > 0:
+                transitions_log[-1]['episode_end_time'] = episode_end_time.isoformat()
 
             # Calculer métriques de l'épisode
             env_metrics = env.get_episode_metrics()
@@ -1080,6 +1201,20 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 filename = f'meta_controller_ep{episode}.pt'
                 meta_controller.save(filename)
                 logger.info(f"Meta-controller checkpoint sauvegardé: {filename}")
+
+                # Sauvegarder les transitions dans un CSV
+                if len(transitions_log) > 0:
+                    import pandas as pd
+                    csv_dir = Path('logs/training_csvs')
+                    csv_dir.mkdir(parents=True, exist_ok=True)
+
+                    df = pd.DataFrame(transitions_log)
+                    csv_filename = csv_dir / f'training_meta_controller_ep{episode}.csv'
+                    df.to_csv(csv_filename, index=False)
+                    logger.info(f"Training CSV sauvegardé: {csv_filename} ({len(transitions_log)} transitions)")
+
+                    # Vider le log pour libérer la mémoire
+                    transitions_log.clear()
 
         logger.info("Entraînement meta-controller terminé")
         system_state.is_training = False
