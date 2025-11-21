@@ -432,7 +432,7 @@ def start_training():
 
         # Paramètres d'entraînement
         num_episodes = data.get('num_episodes', 1000)
-        batch_size = data.get('batch_size', 256)
+        batch_size = data.get('batch_size', 512)  # Augmenté pour mieux utiliser le GPU
         from_checkpoint = data.get('from_checkpoint', None)
         agent_id = data.get('agent_id', None)  # None = tous les agents, sinon l'ID spécifique
 
@@ -973,12 +973,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     # Stocker dans replay buffer
                     agent.replay_buffer.push(state, action, reward, next_state, done)
 
-                    # Update agent
+                    # Update agent: faire plusieurs updates par step pour maximiser l'utilisation GPU
                     if len(agent.replay_buffer) > batch_size:
-                        losses = agent.update()
-                        if losses:
-                            critic_losses.append(losses.get('critic_loss', 0))
-                            actor_losses.append(losses.get('actor_loss', 0))
+                        # Faire 4 updates consécutifs pour mieux utiliser le GPU
+                        for _ in range(4):
+                            losses = agent.update()
+                            if losses:
+                                critic_losses.append(losses.get('critic_loss', 0))
+                                actor_losses.append(losses.get('actor_loss', 0))
 
                     episode_reward += reward
                     episode_steps += 1
