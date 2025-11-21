@@ -1031,13 +1031,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     system_state.save_training_state()
 
                 # Limiter l'historique envoyé aux derniers 100 épisodes pour la performance
+                # Convertir en types Python natifs pour la sérialisation JSON
                 history_to_send = {
-                    'episodes': metrics_history['episodes'][-100:],
-                    'rewards': metrics_history['rewards'][-100:],
-                    'sharpe_ratios': metrics_history['sharpe_ratios'][-100:],
-                    'win_rates': metrics_history['win_rates'][-100:],
-                    'max_drawdowns': metrics_history['max_drawdowns'][-100:],
-                    'total_returns': metrics_history['total_returns'][-100:]
+                    'episodes': [int(x) for x in metrics_history['episodes'][-100:]],
+                    'rewards': [float(x) for x in metrics_history['rewards'][-100:]],
+                    'sharpe_ratios': [float(x) for x in metrics_history['sharpe_ratios'][-100:]],
+                    'win_rates': [float(x) for x in metrics_history['win_rates'][-100:]],
+                    'max_drawdowns': [float(x) for x in metrics_history['max_drawdowns'][-100:]],
+                    'total_returns': [float(x) for x in metrics_history['total_returns'][-100:]]
                 }
 
                 # Émettre progression à chaque épisode
@@ -1046,8 +1047,8 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'total_episodes': num_episodes,
                     'agent': current_agent_id,
                     'reward': float(episode_reward),
-                    'steps': episode_steps,
-                    'episode_length': env.episode_length,  # Pour la barre de progression d'épisode
+                    'steps': int(episode_steps),
+                    'episode_length': int(env.episode_length),  # Pour la barre de progression d'épisode
                     'critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
                     'actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
                     'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
