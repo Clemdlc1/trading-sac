@@ -715,14 +715,7 @@ class TradingEnvironment(gym.Env):
         if current_dd >= 0.80:
             done = True
             terminal_reward = -8.0  # Severe penalty for excessive drawdown
-            logger.warning(f"Drawdown critique at step {self.current_step}: DD={current_dd:.2%}, equity={current_equity:.2f}")
-
-        # 3. Balance = 0 (ruiné)
-        if current_equity <= 0:
-            done = True
-            terminal_reward = -10.0  # Severe penalty
-            logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
-
+            
         # Calculate terminal reward if done
         if done and terminal_reward == 0.0:
             terminal_reward = self.reward_calculator.calculate_terminal_reward(
