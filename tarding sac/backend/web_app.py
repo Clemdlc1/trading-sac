@@ -432,7 +432,7 @@ def start_training():
 
         # Paramètres d'entraînement
         num_episodes = data.get('num_episodes', 1000)
-        batch_size = data.get('batch_size', 256)
+        batch_size = data.get('batch_size', 512)  # Augmenté pour mieux utiliser le GPU
         from_checkpoint = data.get('from_checkpoint', None)
         agent_id = data.get('agent_id', None)  # None = tous les agents, sinon l'ID spécifique
 
@@ -932,8 +932,10 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 episode_reward = 0
                 episode_steps = 0
                 done = False
-                critic_losses = []
-                actor_losses = []
+                # Utiliser moyenne courante au lieu d'accumuler toutes les pertes (économie mémoire)
+                critic_loss_sum = 0.0
+                actor_loss_sum = 0.0
+                update_count = 0
 
                 # Capturer la date de début d'épisode
                 episode_start_time = datetime.now()
@@ -973,12 +975,15 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     # Stocker dans replay buffer
                     agent.replay_buffer.push(state, action, reward, next_state, done)
 
-                    # Update agent
+                    # Update agent: faire plusieurs updates par step pour maximiser l'utilisation GPU
                     if len(agent.replay_buffer) > batch_size:
-                        losses = agent.update()
-                        if losses:
-                            critic_losses.append(losses.get('critic_loss', 0))
-                            actor_losses.append(losses.get('actor_loss', 0))
+                        # Faire 4 updates consécutifs pour mieux utiliser le GPU
+                        for _ in range(4):
+                            losses = agent.update()
+                            if losses:
+                                critic_loss_sum += losses.get('critic_loss', 0)
+                                actor_loss_sum += losses.get('actor_loss', 0)
+                                update_count += 1
 
                     episode_reward += reward
                     episode_steps += 1
@@ -1008,8 +1013,8 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'agent_id': current_agent_id,
                     'episode_reward': float(episode_reward),
                     'episode_steps': episode_steps,
-                    'avg_critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
-                    'avg_actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
+                    'avg_critic_loss': float(critic_loss_sum / update_count) if update_count > 0 else 0,
+                    'avg_actor_loss': float(actor_loss_sum / update_count) if update_count > 0 else 0,
                     'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
                     'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
                     'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
@@ -1026,18 +1031,24 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 metrics_history['max_drawdowns'].append(float(env_metrics.get('max_drawdown', 0)))
                 metrics_history['total_returns'].append(float(env_metrics.get('total_return', 0)))
 
+                # Limiter l'historique stocké aux 200 derniers épisodes
+                if len(metrics_history['episodes']) > 200:
+                    for key in metrics_history.keys():
+                        metrics_history[key] = metrics_history[key][-200:]
+
                 # Sauvegarder l'état seulement tous les 10 épisodes (optimisation performance)
                 if episode % 10 == 0:
                     system_state.save_training_state()
 
                 # Limiter l'historique envoyé aux derniers 100 épisodes pour la performance
+                # Convertir en types Python natifs pour la sérialisation JSON
                 history_to_send = {
-                    'episodes': metrics_history['episodes'][-100:],
-                    'rewards': metrics_history['rewards'][-100:],
-                    'sharpe_ratios': metrics_history['sharpe_ratios'][-100:],
-                    'win_rates': metrics_history['win_rates'][-100:],
-                    'max_drawdowns': metrics_history['max_drawdowns'][-100:],
-                    'total_returns': metrics_history['total_returns'][-100:]
+                    'episodes': [int(x) for x in metrics_history['episodes'][-100:]],
+                    'rewards': [float(x) for x in metrics_history['rewards'][-100:]],
+                    'sharpe_ratios': [float(x) for x in metrics_history['sharpe_ratios'][-100:]],
+                    'win_rates': [float(x) for x in metrics_history['win_rates'][-100:]],
+                    'max_drawdowns': [float(x) for x in metrics_history['max_drawdowns'][-100:]],
+                    'total_returns': [float(x) for x in metrics_history['total_returns'][-100:]]
                 }
 
                 # Émettre progression à chaque épisode
