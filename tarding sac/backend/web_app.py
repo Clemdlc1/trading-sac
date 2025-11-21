@@ -754,6 +754,12 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
         logger.info(f"Features chargées: {len(train_features)} samples d'entraînement")
 
+        # Retirer la colonne timestamp si présente (non numérique)
+        if 'timestamp' in train_features.columns:
+            train_features = train_features.drop(columns=['timestamp'])
+
+        logger.info(f"Features après nettoyage: {train_features.shape}")
+
         # Utiliser les données d'entraînement pour l'agent
         eurusd_data = train_data.get('EURUSD')
         if eurusd_data is None:
@@ -954,6 +960,10 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
         train_features, val_features, test_features = feature_pipeline.run_full_pipeline(
             train_data, val_data, test_data, force_recalculate=False
         )
+
+        # Retirer la colonne timestamp si présente (non numérique)
+        if 'timestamp' in train_features.columns:
+            train_features = train_features.drop(columns=['timestamp'])
 
         # Charger les 3 agents SAC pré-entraînés
         agents = []
