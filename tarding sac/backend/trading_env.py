@@ -714,11 +714,11 @@ class TradingEnvironment(gym.Env):
         # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
         if current_dd >= 0.80:
             done = True
-            # Malus proportionnel à la précocité de l'arrêt
+            # Malus proportionnel à la précocité de l'arrêt (×10 pour signal très fort)
             # Plus l'épisode se termine tôt, plus le malus est élevé
             progress_ratio = self.current_step / self.episode_length
-            # Malus entre -10.0 (arrêt immédiat) et -5.0 (arrêt tardif)
-            early_stop_penalty = -10.0 + (5.0 * progress_ratio)
+            # Malus entre -100.0 (arrêt immédiat) et -50.0 (arrêt tardif)
+            early_stop_penalty = -100.0 + (50.0 * progress_ratio)
             terminal_reward = early_stop_penalty
             logger.warning(
                 f"Drawdown critique at step {self.current_step}/{self.episode_length} "
@@ -729,7 +729,7 @@ class TradingEnvironment(gym.Env):
         # 3. Balance = 0 (ruiné)
         if current_equity <= 0:
             done = True
-            terminal_reward = -10.0  # Severe penalty
+            terminal_reward = -100.0  # Severe penalty (augmenté pour cohérence)
             logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
 
         # Calculate terminal reward if done

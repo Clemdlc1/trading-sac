@@ -673,7 +673,8 @@ class SACAgent:
         # Training state
         self.total_steps = 0
         self.episode_count = 0
-        
+        self.buffer_ready_logged = False  # Flag pour logger une seule fois quand buffer est prêt
+
         # Adaptive Normalization state
         self.reward_mean = 0.0
         self.reward_std = 1.0
@@ -758,6 +759,16 @@ class SACAgent:
         batch = self.replay_buffer.sample(self.config.batch_size)
         if batch is None:
             return {}
+
+        # Log une fois quand le replay buffer est plein et que les updates commencent
+        if not self.buffer_ready_logged:
+            self.buffer_ready_logged = True
+            logger.info("="*80)
+            logger.info(f"🚀 REPLAY BUFFER READY - Starting model updates!")
+            logger.info(f"   Buffer size: {len(self.replay_buffer)}/{self.config.buffer_capacity}")
+            logger.info(f"   Batch size: {self.config.batch_size}")
+            logger.info(f"   Updates will now occur at EVERY step (1 update/step)")
+            logger.info("="*80)
 
         # Convert to tensors using pinned memory buffers
         if self.batch_states_buffer is not None:
