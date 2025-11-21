@@ -718,7 +718,7 @@ class TradingEnvironment(gym.Env):
             # Plus l'épisode se termine tôt, plus le malus est élevé
             progress_ratio = self.current_step / self.episode_length
             # Malus entre -100.0 (arrêt immédiat) et -50.0 (arrêt tardif)
-            early_stop_penalty = -100.0 + (50.0 * progress_ratio)
+            early_stop_penalty = -100.0 + (90.0 * progress_ratio)
             terminal_reward = early_stop_penalty
             logger.warning(
                 f"Drawdown critique at step {self.current_step}/{self.episode_length} "
