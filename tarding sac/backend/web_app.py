@@ -273,19 +273,19 @@ def list_models():
                 stat = path.stat()
                 checkpoints.append({
                     'name': path.stem,
-                    'path': str(path),
+                    'path': path.name,  # Envoyer seulement le nom du fichier
                     'size': stat.st_size,
                     'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
                     'type': 'checkpoint'
                 })
-        
+
         production = []
         if production_dir.exists():
             for path in production_dir.glob('*.pt'):
                 stat = path.stat()
                 production.append({
                     'name': path.stem,
-                    'path': str(path),
+                    'path': path.name,  # Envoyer seulement le nom du fichier
                     'size': stat.st_size,
                     'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
                     'type': 'production'
@@ -305,9 +305,25 @@ def load_model():
     """Charger un modèle"""
     try:
         data = request.json
-        model_path = data.get('model_path')
-        
-        if not model_path or not Path(model_path).exists():
+        model_filename = data.get('model_path')  # C'est maintenant juste le nom du fichier
+
+        if not model_filename:
+            return jsonify({
+                'success': False,
+                'error': 'Nom de modèle manquant'
+            }), 400
+
+        # Chercher le fichier dans checkpoint_dir et production_dir
+        checkpoint_dir = Path(system_state.config['model']['checkpoint_dir'])
+        production_dir = Path(system_state.config['model']['production_dir'])
+
+        model_path = None
+        if (checkpoint_dir / model_filename).exists():
+            model_path = checkpoint_dir / model_filename
+        elif (production_dir / model_filename).exists():
+            model_path = production_dir / model_filename
+
+        if not model_path:
             return jsonify({
                 'success': False,
                 'error': 'Modèle non trouvé'
@@ -350,6 +366,52 @@ def load_model():
     
     except Exception as e:
         logger.error(f"Erreur chargement modèle: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/models/delete', methods=['POST'])
+def delete_model():
+    """Supprimer un modèle"""
+    try:
+        data = request.json
+        model_filename = data.get('model_path')  # C'est le nom du fichier
+
+        if not model_filename:
+            return jsonify({
+                'success': False,
+                'error': 'Nom de modèle manquant'
+            }), 400
+
+        # Chercher le fichier dans checkpoint_dir et production_dir
+        checkpoint_dir = Path(system_state.config['model']['checkpoint_dir'])
+        production_dir = Path(system_state.config['model']['production_dir'])
+
+        model_path = None
+        if (checkpoint_dir / model_filename).exists():
+            model_path = checkpoint_dir / model_filename
+        elif (production_dir / model_filename).exists():
+            model_path = production_dir / model_filename
+
+        if not model_path:
+            return jsonify({
+                'success': False,
+                'error': 'Modèle non trouvé'
+            }), 404
+
+        # Supprimer le fichier
+        model_path.unlink()
+        logger.info(f"Modèle supprimé: {model_path}")
+
+        return jsonify({
+            'success': True,
+            'message': f'Modèle {model_filename} supprimé avec succès'
+        })
+
+    except Exception as e:
+        logger.error(f"Erreur suppression modèle: {e}")
         logger.error(traceback.format_exc())
         return jsonify({
             'success': False,
@@ -849,7 +911,17 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
         # Entraîner chaque agent
         for episode in range(num_episodes):
+            # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
+            transitions_log.clear()
+
             if system_state.stop_event.is_set():
+                logger.info("Arrêt manuel détecté, sauvegarde des agents...")
+                # Sauvegarder les agents avant d'arrêter
+                for i, agent in enumerate(agents):
+                    current_agent_id = agent_indices[i] if agent_id is None else agent_id
+                    filename = f'checkpoint_ep{episode}_agent{current_agent_id}_manual_stop.pt'
+                    agent.save(filename)
+                    logger.info(f"Checkpoint d'arrêt manuel sauvegardé: {filename}")
                 break
 
             for agent_idx, agent in enumerate(agents):
@@ -941,29 +1013,29 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 metrics_history['max_drawdowns'].append(float(env_metrics.get('max_drawdown', 0)))
                 metrics_history['total_returns'].append(float(env_metrics.get('total_return', 0)))
 
-                # Émettre progression toutes les 5 épisodes
-                if episode % 5 == 0:
-                    system_state.save_training_state()
-                    socketio.emit('training_progress', {
-                        'episode': episode + 1,
-                        'total_episodes': num_episodes,
-                        'agent': current_agent_id,
-                        'reward': float(episode_reward),
-                        'steps': episode_steps,
-                        'critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
-                        'actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
-                        'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
-                        'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
-                        'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
-                        'win_rate': float(env_metrics.get('win_rate', 0)),
-                        'profit_factor': float(env_metrics.get('profit_factor', 0)),
-                        'total_return': float(env_metrics.get('total_return', 0)),
-                        'total_trades': int(env_metrics.get('total_trades', 0)),
-                        'winning_trades': int(env_metrics.get('winning_trades', 0)),
-                        'final_equity': float(env_metrics.get('final_equity', 0)),
-                        'timestamp': datetime.now().isoformat(),
-                        'metrics_history': metrics_history  # Envoyer l'historique complet
-                    })
+                # Émettre progression à chaque épisode
+                system_state.save_training_state()
+                socketio.emit('training_progress', {
+                    'episode': episode + 1,
+                    'total_episodes': num_episodes,
+                    'agent': current_agent_id,
+                    'reward': float(episode_reward),
+                    'steps': episode_steps,
+                    'episode_length': env.episode_length,  # Pour la barre de progression d'épisode
+                    'critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
+                    'actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
+                    'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
+                    'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
+                    'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
+                    'win_rate': float(env_metrics.get('win_rate', 0)),
+                    'profit_factor': float(env_metrics.get('profit_factor', 0)),
+                    'total_return': float(env_metrics.get('total_return', 0)),
+                    'total_trades': int(env_metrics.get('total_trades', 0)),
+                    'winning_trades': int(env_metrics.get('winning_trades', 0)),
+                    'final_equity': float(env_metrics.get('final_equity', 0)),
+                    'timestamp': datetime.now().isoformat(),
+                    'metrics_history': metrics_history  # Envoyer l'historique complet
+                })
 
             # Sauvegarder checkpoint tous les 100 épisodes
             if episode % 100 == 0 and episode > 0:
@@ -973,19 +1045,17 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     agent.save(filename)
                     logger.info(f"Checkpoint sauvegardé: {filename}")
 
-                # Sauvegarder les transitions dans un CSV
+                # Sauvegarder les transitions dans un CSV (seulement l'épisode du checkpoint)
                 if len(transitions_log) > 0:
                     import pandas as pd
                     csv_dir = Path('logs/training_csvs')
                     csv_dir.mkdir(parents=True, exist_ok=True)
 
                     df = pd.DataFrame(transitions_log)
+                    # Nom du fichier indique l'épisode du checkpoint
                     csv_filename = csv_dir / f'training_ep{episode}_agent{current_agent_id}.csv'
                     df.to_csv(csv_filename, index=False)
                     logger.info(f"Training CSV sauvegardé: {csv_filename} ({len(transitions_log)} transitions)")
-
-                    # Vider le log pour libérer la mémoire
-                    transitions_log.clear()
         
         logger.info("Entraînement terminé")
         system_state.is_training = False
@@ -1102,6 +1172,9 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
 
         # Entraîner le meta-controller
         for episode in range(num_episodes):
+            # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
+            transitions_log.clear()
+
             if system_state.stop_event.is_set():
                 break
 
@@ -1184,23 +1257,23 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 'total_return': float(env_metrics.get('total_return', 0))
             }
 
-            # Émettre progression toutes les 5 épisodes
-            if episode % 5 == 0:
-                system_state.save_training_state()
-                socketio.emit('training_progress', {
-                    'episode': episode + 1,
-                    'total_episodes': num_episodes,
-                    'agent': 'meta_controller',
-                    'reward': float(episode_reward),
-                    'steps': episode_steps,
-                    'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
-                    'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
-                    'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
-                    'win_rate': float(env_metrics.get('win_rate', 0)),
-                    'profit_factor': float(env_metrics.get('profit_factor', 0)),
-                    'total_return': float(env_metrics.get('total_return', 0)),
-                    'timestamp': datetime.now().isoformat()
-                })
+            # Émettre progression à chaque épisode
+            system_state.save_training_state()
+            socketio.emit('training_progress', {
+                'episode': episode + 1,
+                'total_episodes': num_episodes,
+                'agent': 'meta_controller',
+                'reward': float(episode_reward),
+                'steps': episode_steps,
+                'episode_length': env.episode_length,  # Pour la barre de progression d'épisode
+                'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
+                'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
+                'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
+                'win_rate': float(env_metrics.get('win_rate', 0)),
+                'profit_factor': float(env_metrics.get('profit_factor', 0)),
+                'total_return': float(env_metrics.get('total_return', 0)),
+                'timestamp': datetime.now().isoformat()
+            })
 
             # Sauvegarder checkpoint tous les 50 épisodes
             if episode % 50 == 0 and episode > 0:
@@ -1218,9 +1291,6 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                     csv_filename = csv_dir / f'training_meta_controller_ep{episode}.csv'
                     df.to_csv(csv_filename, index=False)
                     logger.info(f"Training CSV sauvegardé: {csv_filename} ({len(transitions_log)} transitions)")
-
-                    # Vider le log pour libérer la mémoire
-                    transitions_log.clear()
 
         logger.info("Entraînement meta-controller terminé")
         system_state.is_training = False

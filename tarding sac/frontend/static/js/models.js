@@ -257,11 +257,23 @@ async function deleteModel(modelPath) {
     }
     
     try {
-        // TODO: Implémenter l'API de suppression
-        showNotification('Succès', 'Modèle supprimé', 'info');
-        
-        // Recharger les modèles
-        setTimeout(() => loadModels(), 500);
+        const response = await fetch('/api/models/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ model_path: modelPath })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification('Succès', data.message, 'success');
+            // Recharger les modèles
+            setTimeout(() => loadModels(), 500);
+        } else {
+            showNotification('Erreur', data.error, 'danger');
+        }
     } catch (error) {
         console.error('Erreur suppression:', error);
         showNotification('Erreur', 'Impossible de supprimer le modèle', 'danger');
@@ -488,6 +500,14 @@ function updateTrainingProgress(data) {
     const agentName = data.agent !== undefined ? (agentNames[data.agent] || `Agent #${data.agent}`) : 'N/A';
     const totalTrades = data.total_trades !== undefined ? ` - Trades: ${data.total_trades}` : '';
     info.textContent = `Épisode ${data.episode}/${modelsState.totalEpisodes} - ${agentName}${totalTrades}`;
+
+    // Mettre à jour la barre de progression de l'épisode
+    if (data.steps !== undefined && data.episode_length !== undefined) {
+        const episodePercentage = (data.steps / data.episode_length) * 100;
+        const episodeProgressBar = document.getElementById('episode-progress-bar');
+        episodeProgressBar.style.width = episodePercentage + '%';
+        document.getElementById('episode-progress-text').textContent = `${data.steps}/${data.episode_length} steps`;
+    }
 
     // Mettre à jour les statistiques d'épisode
     if (data.total_trades !== undefined) {
