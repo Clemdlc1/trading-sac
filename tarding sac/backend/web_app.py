@@ -911,6 +911,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
         # Entraîner chaque agent
         for episode in range(num_episodes):
+            # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
+            transitions_log.clear()
+
             if system_state.stop_event.is_set():
                 logger.info("Arrêt manuel détecté, sauvegarde des agents...")
                 # Sauvegarder les agents avant d'arrêter
@@ -1042,21 +1045,17 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     agent.save(filename)
                     logger.info(f"Checkpoint sauvegardé: {filename}")
 
-                # Sauvegarder les transitions dans un CSV
+                # Sauvegarder les transitions dans un CSV (seulement l'épisode du checkpoint)
                 if len(transitions_log) > 0:
                     import pandas as pd
                     csv_dir = Path('logs/training_csvs')
                     csv_dir.mkdir(parents=True, exist_ok=True)
 
                     df = pd.DataFrame(transitions_log)
-                    # Nom du fichier indique la plage d'épisodes (ex: ep1-100, ep101-200, etc.)
-                    start_ep = ((episode - 100) + 1) if episode >= 100 else 1
-                    csv_filename = csv_dir / f'training_ep{start_ep}-{episode}_agent{current_agent_id}.csv'
+                    # Nom du fichier indique l'épisode du checkpoint
+                    csv_filename = csv_dir / f'training_ep{episode}_agent{current_agent_id}.csv'
                     df.to_csv(csv_filename, index=False)
                     logger.info(f"Training CSV sauvegardé: {csv_filename} ({len(transitions_log)} transitions)")
-
-                    # Vider le log pour le prochain batch
-                    transitions_log.clear()
         
         logger.info("Entraînement terminé")
         system_state.is_training = False
@@ -1173,6 +1172,9 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
 
         # Entraîner le meta-controller
         for episode in range(num_episodes):
+            # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
+            transitions_log.clear()
+
             if system_state.stop_event.is_set():
                 break
 
@@ -1289,9 +1291,6 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                     csv_filename = csv_dir / f'training_meta_controller_ep{episode}.csv'
                     df.to_csv(csv_filename, index=False)
                     logger.info(f"Training CSV sauvegardé: {csv_filename} ({len(transitions_log)} transitions)")
-
-                    # Vider le log pour libérer la mémoire
-                    transitions_log.clear()
 
         logger.info("Entraînement meta-controller terminé")
         system_state.is_training = False
