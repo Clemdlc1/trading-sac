@@ -42,7 +42,7 @@ from backend.data_pipeline import DataPipeline
 from backend.feature_engineering import FeatureEngineer
 from backend.hmm_detector import HMMRegimeDetector
 from backend.trading_env import TradingEnvironment
-from backend.sac_agent import SACAgent
+from backend.sac_agent import SACAgent, SACConfig
 from backend.auxiliary_task import AuxiliaryTaskLearner
 from backend.ensemble_meta import EnsembleMetaController
 from backend.validation import ValidationFramework
@@ -303,7 +303,7 @@ def load_model():
         
         # Charger depuis checkpoint
         checkpoint = torch.load(model_path)
-        system_state.ensemble_controller.load_checkpoint(model_path)
+        system_state.ensemble_controller.load(model_path)
         
         system_state.current_model = Path(model_path).stem
         
@@ -678,16 +678,20 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
         # Créer les agents
         agents = []
         for i in range(system_state.config['model']['ensemble_size']):
-            agent = SACAgent(
+            # Create SAC config with correct parameters
+            sac_config = SACConfig(
                 state_dim=30,
                 action_dim=1,
-                hidden_dim=256
+                hidden_dims=[256, 256]
             )
-            
+            # Use agent_id >= 3 to avoid regime feature requirements for agents 1 & 2
+            # (agents 1 & 2 expect state_dim=32 with HMM regime features)
+            agent = SACAgent(config=sac_config, agent_id=i+3)
+
             # Charger depuis checkpoint si spécifié
             if from_checkpoint:
-                agent.load_checkpoint(from_checkpoint)
-            
+                agent.load(from_checkpoint)
+
             agents.append(agent)
         
         # Entraîner chaque agent
@@ -709,10 +713,10 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     
                     # Step environment
                     next_state, reward, done, info = env.step(action)
-                    
+
                     # Stocker dans replay buffer
-                    agent.store_transition(state, action, reward, next_state, done)
-                    
+                    agent.replay_buffer.push(state, action, reward, next_state, done)
+
                     # Update agent
                     if len(agent.replay_buffer) > batch_size:
                         agent.update(batch_size)
@@ -733,9 +737,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             if episode % 100 == 0:
                 checkpoint_path = Path(system_state.config['model']['checkpoint_dir']) / f'checkpoint_ep{episode}.pt'
                 checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-                
+
                 for i, agent in enumerate(agents):
-                    agent.save_checkpoint(str(checkpoint_path).replace('.pt', f'_agent{i}.pt'))
+                    agent.save(f'checkpoint_ep{episode}_agent{i}.pt')
         
         logger.info("Entraînement terminé")
         system_state.is_training = False
@@ -874,11 +878,16 @@ def run_validation_process(validator: ValidationFramework, model_path: str):
     """Exécuter le processus de validation"""
     try:
         logger.info(f"Démarrage validation pour: {model_path}")
-        
+
         # Charger le modèle
-        agent = SACAgent(state_dim=30, action_dim=1, hidden_dim=256)
-        agent.load_checkpoint(model_path)
-        
+        sac_config = SACConfig(
+            state_dim=30,
+            action_dim=1,
+            hidden_dims=[256, 256]
+        )
+        agent = SACAgent(config=sac_config, agent_id=1)
+        agent.load(model_path)
+
         # Exécuter validation walk-forward
         results = validator.walk_forward_validation(
             agent=agent,
