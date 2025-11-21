@@ -984,6 +984,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     episode_steps += 1
                     state = next_state
 
+                    # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
+                    if episode_steps % 20 == 0:
+                        socketio.emit('episode_step_progress', {
+                            'current_step': episode_steps,
+                            'episode_length': env.episode_length,
+                            'episode': episode + 1
+                        })
+
                 # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
                 if should_log_transitions:
                     episode_end_time = datetime.now()
@@ -1193,6 +1201,9 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
             # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
             transitions_log.clear()
 
+            # Logger les transitions seulement pour les épisodes qui seront sauvegardés (optimisation performance)
+            should_log_transitions = (episode % 50 == 0 and episode > 0)
+
             if system_state.stop_event.is_set():
                 break
 
@@ -1220,31 +1231,32 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 # Step environment
                 next_state, reward, done, info = env.step(final_action)
 
-                # Logger la transition pour le CSV avec les observations et actions individuelles
-                transition_data = {
-                    'episode': episode + 1,
-                    'agent_id': 'meta_controller',
-                    'step': episode_steps,
-                    'final_action': float(final_action[0]) if hasattr(final_action, '__len__') else float(final_action),
-                    'reward': float(reward),
-                    'done': int(done),
-                    'equity': float(info.get('equity', 0)),
-                    'position': float(info.get('position', 0)),
-                    'cumulative_reward': episode_reward + reward,
-                    'episode_start_time': episode_start_time.isoformat()
-                }
+                # Logger la transition pour le CSV seulement si c'est un épisode de checkpoint (optimisation)
+                if should_log_transitions:
+                    transition_data = {
+                        'episode': episode + 1,
+                        'agent_id': 'meta_controller',
+                        'step': episode_steps,
+                        'final_action': float(final_action[0]) if hasattr(final_action, '__len__') else float(final_action),
+                        'reward': float(reward),
+                        'done': int(done),
+                        'equity': float(info.get('equity', 0)),
+                        'position': float(info.get('position', 0)),
+                        'cumulative_reward': episode_reward + reward,
+                        'episode_start_time': episode_start_time.isoformat()
+                    }
 
-                # Ajouter les actions des agents individuels
-                for i, agent_action in enumerate(agent_actions):
-                    action_val = float(agent_action[0]) if hasattr(agent_action, '__len__') else float(agent_action)
-                    transition_data[f'agent_{i+3}_action'] = action_val
+                    # Ajouter les actions des agents individuels
+                    for i, agent_action in enumerate(agent_actions):
+                        action_val = float(agent_action[0]) if hasattr(agent_action, '__len__') else float(agent_action)
+                        transition_data[f'agent_{i+3}_action'] = action_val
 
-                # Ajouter les observations (state)
-                if hasattr(state, '__len__'):
-                    for i, obs_value in enumerate(state):
-                        transition_data[f'obs_{i}'] = float(obs_value)
+                    # Ajouter les observations (state)
+                    if hasattr(state, '__len__'):
+                        for i, obs_value in enumerate(state):
+                            transition_data[f'obs_{i}'] = float(obs_value)
 
-                transitions_log.append(transition_data)
+                    transitions_log.append(transition_data)
 
                 # Entraîner le meta-controller
                 meta_controller.train_step(state, agent_actions, reward, next_state, done)
@@ -1253,10 +1265,19 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 episode_steps += 1
                 state = next_state
 
+                # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
+                if episode_steps % 20 == 0:
+                    socketio.emit('episode_step_progress', {
+                        'current_step': episode_steps,
+                        'episode_length': env.episode_length,
+                        'episode': episode + 1
+                    })
+
             # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
-            episode_end_time = datetime.now()
-            if len(transitions_log) > 0:
-                transitions_log[-1]['episode_end_time'] = episode_end_time.isoformat()
+            if should_log_transitions:
+                episode_end_time = datetime.now()
+                if len(transitions_log) > 0:
+                    transitions_log[-1]['episode_end_time'] = episode_end_time.isoformat()
 
             # Calculer métriques de l'épisode
             env_metrics = env.get_episode_metrics()

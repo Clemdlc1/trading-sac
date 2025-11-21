@@ -98,6 +98,16 @@ socket.on('training_device_info', function(data) {
     deviceInfo.style.display = 'block';
 });
 
+socket.on('episode_step_progress', function(data) {
+    // Mettre à jour seulement la barre de progression de l'épisode (message léger)
+    if (data.current_step !== undefined && data.episode_length !== undefined) {
+        const episodePercentage = (data.current_step / data.episode_length) * 100;
+        const episodeProgressBar = document.getElementById('episode-progress-bar');
+        episodeProgressBar.style.width = episodePercentage + '%';
+        document.getElementById('episode-progress-text').textContent = `${data.current_step}/${data.episode_length} steps`;
+    }
+});
+
 // ============================================================================
 // CHARGEMENT DES DONNÉES
 // ============================================================================
@@ -500,6 +510,11 @@ function updateTrainingProgress(data) {
     const agentName = data.agent !== undefined ? (agentNames[data.agent] || `Agent #${data.agent}`) : 'N/A';
     const totalTrades = data.total_trades !== undefined ? ` - Trades: ${data.total_trades}` : '';
     info.textContent = `Épisode ${data.episode}/${modelsState.totalEpisodes} - ${agentName}${totalTrades}`;
+
+    // Réinitialiser la barre de progression de l'épisode (fin d'épisode, prêt pour le suivant)
+    const episodeProgressBar = document.getElementById('episode-progress-bar');
+    episodeProgressBar.style.width = '0%';
+    document.getElementById('episode-progress-text').textContent = '0/' + (data.episode_length || '?') + ' steps';
 
     // Mettre à jour les statistiques d'épisode
     if (data.total_trades !== undefined) {
