@@ -914,6 +914,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
             transitions_log.clear()
 
+            # Logger les transitions seulement pour les épisodes qui seront sauvegardés (optimisation performance)
+            should_log_transitions = (episode % 100 == 0 and episode > 0)
+
             if system_state.stop_event.is_set():
                 logger.info("Arrêt manuel détecté, sauvegarde des agents...")
                 # Sauvegarder les agents avant d'arrêter
@@ -945,26 +948,27 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     # Step environment
                     next_state, reward, done, info = env.step(action)
 
-                    # Logger la transition pour le CSV avec les observations
-                    transition_data = {
-                        'episode': episode + 1,
-                        'agent_id': agent_indices[agent_idx] if agent_id is None else agent_id,
-                        'step': episode_steps,
-                        'action': float(action[0]) if hasattr(action, '__len__') else float(action),
-                        'reward': float(reward),
-                        'done': int(done),
-                        'equity': float(info.get('equity', 0)),
-                        'position': float(info.get('position', 0)),
-                        'cumulative_reward': episode_reward + reward,
-                        'episode_start_time': episode_start_time.isoformat()
-                    }
+                    # Logger la transition pour le CSV seulement si c'est un épisode de checkpoint (optimisation)
+                    if should_log_transitions:
+                        transition_data = {
+                            'episode': episode + 1,
+                            'agent_id': agent_indices[agent_idx] if agent_id is None else agent_id,
+                            'step': episode_steps,
+                            'action': float(action[0]) if hasattr(action, '__len__') else float(action),
+                            'reward': float(reward),
+                            'done': int(done),
+                            'equity': float(info.get('equity', 0)),
+                            'position': float(info.get('position', 0)),
+                            'cumulative_reward': episode_reward + reward,
+                            'episode_start_time': episode_start_time.isoformat()
+                        }
 
-                    # Ajouter les observations (state) - toutes les features
-                    if hasattr(state, '__len__'):
-                        for i, obs_value in enumerate(state):
-                            transition_data[f'obs_{i}'] = float(obs_value)
+                        # Ajouter les observations (state) - toutes les features
+                        if hasattr(state, '__len__'):
+                            for i, obs_value in enumerate(state):
+                                transition_data[f'obs_{i}'] = float(obs_value)
 
-                    transitions_log.append(transition_data)
+                        transitions_log.append(transition_data)
 
                     # Stocker dans replay buffer
                     agent.replay_buffer.push(state, action, reward, next_state, done)
@@ -981,9 +985,10 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     state = next_state
 
                 # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
-                episode_end_time = datetime.now()
-                if len(transitions_log) > 0:
-                    transitions_log[-1]['episode_end_time'] = episode_end_time.isoformat()
+                if should_log_transitions:
+                    episode_end_time = datetime.now()
+                    if len(transitions_log) > 0:
+                        transitions_log[-1]['episode_end_time'] = episode_end_time.isoformat()
 
                 # Calculer métriques de l'épisode
                 env_metrics = env.get_episode_metrics()
@@ -1013,8 +1018,21 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 metrics_history['max_drawdowns'].append(float(env_metrics.get('max_drawdown', 0)))
                 metrics_history['total_returns'].append(float(env_metrics.get('total_return', 0)))
 
+                # Sauvegarder l'état seulement tous les 10 épisodes (optimisation performance)
+                if episode % 10 == 0:
+                    system_state.save_training_state()
+
+                # Limiter l'historique envoyé aux derniers 100 épisodes pour la performance
+                history_to_send = {
+                    'episodes': metrics_history['episodes'][-100:],
+                    'rewards': metrics_history['rewards'][-100:],
+                    'sharpe_ratios': metrics_history['sharpe_ratios'][-100:],
+                    'win_rates': metrics_history['win_rates'][-100:],
+                    'max_drawdowns': metrics_history['max_drawdowns'][-100:],
+                    'total_returns': metrics_history['total_returns'][-100:]
+                }
+
                 # Émettre progression à chaque épisode
-                system_state.save_training_state()
                 socketio.emit('training_progress', {
                     'episode': episode + 1,
                     'total_episodes': num_episodes,
@@ -1034,7 +1052,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'winning_trades': int(env_metrics.get('winning_trades', 0)),
                     'final_equity': float(env_metrics.get('final_equity', 0)),
                     'timestamp': datetime.now().isoformat(),
-                    'metrics_history': metrics_history  # Envoyer l'historique complet
+                    'metrics_history': history_to_send  # Envoyer seulement les derniers 100 épisodes
                 })
 
             # Sauvegarder checkpoint tous les 100 épisodes

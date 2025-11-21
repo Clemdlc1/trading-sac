@@ -501,14 +501,6 @@ function updateTrainingProgress(data) {
     const totalTrades = data.total_trades !== undefined ? ` - Trades: ${data.total_trades}` : '';
     info.textContent = `Épisode ${data.episode}/${modelsState.totalEpisodes} - ${agentName}${totalTrades}`;
 
-    // Mettre à jour la barre de progression de l'épisode
-    if (data.steps !== undefined && data.episode_length !== undefined) {
-        const episodePercentage = (data.steps / data.episode_length) * 100;
-        const episodeProgressBar = document.getElementById('episode-progress-bar');
-        episodeProgressBar.style.width = episodePercentage + '%';
-        document.getElementById('episode-progress-text').textContent = `${data.steps}/${data.episode_length} steps`;
-    }
-
     // Mettre à jour les statistiques d'épisode
     if (data.total_trades !== undefined) {
         document.getElementById('stat-total-trades').textContent = data.total_trades;
