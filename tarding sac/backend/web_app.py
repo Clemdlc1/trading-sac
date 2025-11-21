@@ -987,9 +987,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
                     if episode_steps % 20 == 0:
                         socketio.emit('episode_step_progress', {
-                            'current_step': episode_steps,
-                            'episode_length': env.episode_length,
-                            'episode': episode + 1
+                            'current_step': int(episode_steps),
+                            'episode_length': int(env.episode_length),
+                            'episode': int(episode + 1)
                         })
 
                 # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
@@ -1018,8 +1018,8 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'total_return': float(env_metrics.get('total_return', 0))
                 }
 
-                # Ajouter à l'historique
-                metrics_history['episodes'].append(episode + 1)
+                # Ajouter à l'historique (convertir tous les types NumPy en types Python natifs)
+                metrics_history['episodes'].append(int(episode + 1))
                 metrics_history['rewards'].append(float(episode_reward))
                 metrics_history['sharpe_ratios'].append(float(env_metrics.get('sharpe_ratio', 0)))
                 metrics_history['win_rates'].append(float(env_metrics.get('win_rate', 0)))
@@ -1042,14 +1042,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
                 # Émettre progression à chaque épisode
                 socketio.emit('training_progress', {
-                    'episode': episode + 1,
-                    'total_episodes': num_episodes,
-                    'agent': current_agent_id,
+                    'episode': int(episode + 1),
+                    'total_episodes': int(num_episodes),
+                    'agent': int(current_agent_id),
                     'reward': float(episode_reward),
-                    'steps': episode_steps,
-                    'episode_length': env.episode_length,  # Pour la barre de progression d'épisode
-                    'critic_loss': float(np.mean(critic_losses)) if critic_losses else 0,
-                    'actor_loss': float(np.mean(actor_losses)) if actor_losses else 0,
+                    'steps': int(episode_steps),
+                    'episode_length': int(env.episode_length),  # Pour la barre de progression d'épisode
+                    'critic_loss': float(np.mean(critic_losses)) if critic_losses else 0.0,
+                    'actor_loss': float(np.mean(actor_losses)) if actor_losses else 0.0,
                     'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
                     'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
                     'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
@@ -1268,9 +1268,9 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
                 if episode_steps % 20 == 0:
                     socketio.emit('episode_step_progress', {
-                        'current_step': episode_steps,
-                        'episode_length': env.episode_length,
-                        'episode': episode + 1
+                        'current_step': int(episode_steps),
+                        'episode_length': int(env.episode_length),
+                        'episode': int(episode + 1)
                     })
 
             # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
@@ -1299,12 +1299,12 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
             # Émettre progression à chaque épisode
             system_state.save_training_state()
             socketio.emit('training_progress', {
-                'episode': episode + 1,
-                'total_episodes': num_episodes,
+                'episode': int(episode + 1),
+                'total_episodes': int(num_episodes),
                 'agent': 'meta_controller',
                 'reward': float(episode_reward),
-                'steps': episode_steps,
-                'episode_length': env.episode_length,  # Pour la barre de progression d'épisode
+                'steps': int(episode_steps),
+                'episode_length': int(env.episode_length),  # Pour la barre de progression d'épisode
                 'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
                 'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
                 'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
