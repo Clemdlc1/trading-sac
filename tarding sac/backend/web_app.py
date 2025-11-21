@@ -987,8 +987,8 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
                     if episode_steps % 20 == 0:
                         socketio.emit('episode_step_progress', {
-                            'current_step': episode_steps,
-                            'episode_length': env.episode_length,
+                            'current_step': int(episode_steps),
+                            'episode_length': int(env.episode_length),
                             'episode': episode + 1
                         })
 
@@ -1268,8 +1268,8 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
                 if episode_steps % 20 == 0:
                     socketio.emit('episode_step_progress', {
-                        'current_step': episode_steps,
-                        'episode_length': env.episode_length,
+                        'current_step': int(episode_steps),
+                        'episode_length': int(env.episode_length),
                         'episode': episode + 1
                     })
 
