@@ -10,9 +10,9 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
 </head>
-<body>
+<body class="page-transition">
     <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <nav class="navbar navbar-expand-lg navbar-light">
         <div class="container-fluid">
             <a class="navbar-brand" href="/">
                 <i class="fas fa-chart-line"></i> SAC Trading System
@@ -42,16 +42,39 @@
                             <i class="fas fa-check-circle"></i> Validation
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dataset">
+                            <i class="fas fa-database"></i> Dataset
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <span class="navbar-text">
+                            <i class="fas fa-circle connected" id="connection-status"></i>
+                            <span id="connection-text">Connecté</span>
+                        </span>
+                    </li>
                 </ul>
             </div>
         </div>
     </nav>
 
-    <div class="container-fluid mt-4">
+    <div class="container-fluid mt-4 px-4">
+        <!-- Page Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h2 class="text-gradient">
+                    <i class="fas fa-brain"></i> Gestion des Modèles
+                </h2>
+                <p class="text-muted">Entraînez et gérez vos agents de trading SAC</p>
+            </div>
+        </div>
+
         <!-- Training Section -->
         <div class="row mb-4">
             <div class="col-md-12">
-                <div class="card">
+                <div class="card hover-lift">
                     <div class="card-header">
                         <h5><i class="fas fa-graduation-cap"></i> Entraînement de Nouveaux Modèles</h5>
                     </div>
@@ -283,7 +306,7 @@
         <!-- Available Models -->
         <div class="row">
             <div class="col-md-6">
-                <div class="card">
+                <div class="card hover-lift">
                     <div class="card-header">
                         <h5><i class="fas fa-folder"></i> Checkpoints</h5>
                     </div>
@@ -310,9 +333,9 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="col-md-6">
-                <div class="card">
+                <div class="card hover-lift">
                     <div class="card-header">
                         <h5><i class="fas fa-rocket"></i> Modèles de Production</h5>
                     </div>
