@@ -703,22 +703,16 @@ class TradingEnvironment(gym.Env):
         # Check termination conditions
         done = False
         terminal_reward = 0.0
-        
+
         # 1. Episode length reached
         if self.current_step >= self.episode_length - 1:
             done = True
-        
-        # 2. Margin call
-        if current_equity < self.config.margin_call_threshold * self.config.initial_capital:
+
+        # 2. Balance = 0 (ruiné)
+        if current_equity <= 0:
             done = True
             terminal_reward = -10.0  # Severe penalty
-            logger.warning(f"Margin call at step {self.current_step}: equity={current_equity:.2f}")
-        
-        # 3. Maximum drawdown exceeded
-        current_dd = (self.peak_equity - current_equity) / self.peak_equity
-        if current_dd > self.config.max_drawdown_threshold:
-            done = True
-            terminal_reward = -5.0  # Penalty
+            logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
         
         # Calculate terminal reward if done
         if done and terminal_reward == 0.0:

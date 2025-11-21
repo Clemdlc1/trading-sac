@@ -63,8 +63,8 @@ class FeatureConfig:
     correlation_period: int = 60  # days for correlation (60 days * 288 bars/day)
     
     # Normalization parameters
-    clip_min: float = -5.0
-    clip_max: float = 5.0
+    clip_min: float = -10.0
+    clip_max: float = 10.0
     epsilon: float = 1e-8
     
     # DXY synthetic index weights (from spec)
