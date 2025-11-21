@@ -700,6 +700,9 @@ class TradingEnvironment(gym.Env):
             n_trades_today
         )
         
+        # Calculate current drawdown for info (not used for termination)
+        current_dd = (self.peak_equity - current_equity) / self.peak_equity if self.peak_equity > 0 else 0.0
+
         # Check termination conditions
         done = False
         terminal_reward = 0.0
@@ -713,7 +716,7 @@ class TradingEnvironment(gym.Env):
             done = True
             terminal_reward = -10.0  # Severe penalty
             logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
-        
+
         # Calculate terminal reward if done
         if done and terminal_reward == 0.0:
             terminal_reward = self.reward_calculator.calculate_terminal_reward(
@@ -721,19 +724,19 @@ class TradingEnvironment(gym.Env):
                 self.equity_curve,
                 self.trades
             )
-        
+
         # Combine rewards
         total_reward = (
             self.config.dense_weight * dense_reward +
             self.config.terminal_weight * terminal_reward
         )
-        
+
         # Next step
         self.current_step += 1
-        
+
         # Get next observation
         obs = self._get_observation()
-        
+
         # Info dictionary
         info = {
             'equity': current_equity,
