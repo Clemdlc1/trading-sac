@@ -673,7 +673,8 @@ class SACAgent:
         # Training state
         self.total_steps = 0
         self.episode_count = 0
-        
+        self.buffer_ready_logged = False  # Flag pour logger une seule fois quand buffer est prêt
+
         # Adaptive Normalization state
         self.reward_mean = 0.0
         self.reward_std = 1.0
@@ -700,10 +701,6 @@ class SACAgent:
             self.batch_next_states_buffer = None
             self.batch_dones_buffer = None
 
-        # Gradient accumulation
-        self.gradient_accumulation_steps = 4  # Accumulate gradients over 4 steps
-        self.accum_step = 0
-
         logger.info(f"SAC Agent {agent_id} initialized on {device}")
         logger.info(f"  State dim: {state_dim}")
         logger.info(f"  Action dim: {self.config.action_dim}")
@@ -714,7 +711,6 @@ class SACAgent:
         logger.info(f"    - Optimized ReplayBuffer: Pre-allocated arrays with O(1) sampling")
         logger.info(f"    - Pinned memory transfers: Faster CPU->GPU data movement")
         logger.info(f"    - Mixed precision training: {self.use_amp}")
-        logger.info(f"    - Gradient accumulation steps: {self.gradient_accumulation_steps}")
         logger.info(f"    - Vectorized reward normalization: Eliminates per-reward loops")
     
     def select_action(
@@ -764,6 +760,16 @@ class SACAgent:
         if batch is None:
             return {}
 
+        # Log une fois quand le replay buffer est plein et que les updates commencent
+        if not self.buffer_ready_logged:
+            self.buffer_ready_logged = True
+            logger.info("="*80)
+            logger.info(f"🚀 REPLAY BUFFER READY - Starting model updates!")
+            logger.info(f"   Buffer size: {len(self.replay_buffer)}/{self.config.buffer_capacity}")
+            logger.info(f"   Batch size: {self.config.batch_size}")
+            logger.info(f"   Updates will now occur at EVERY step (1 update/step)")
+            logger.info("="*80)
+
         # Convert to tensors using pinned memory buffers
         if self.batch_states_buffer is not None:
             actual_batch_size = len(batch['states'])
@@ -792,21 +798,20 @@ class SACAgent:
         if self.config.use_adaptive_norm:
             rewards = self._normalize_rewards(rewards)
 
-        # Update critics and actor with gradient accumulation
-        self.accum_step += 1
-        is_accumulation_step = (self.accum_step % self.gradient_accumulation_steps != 0)
-
         # Update critics
         critic_loss = self._update_critics(
-            states, actions, rewards, next_states, dones, regime, is_accumulation_step
+            states, actions, rewards, next_states, dones, regime
         )
 
-        # Update actor (less frequently for better GPU utilization)
-        actor_loss, alpha_loss = self._update_actor(states, regime, is_accumulation_step)
+        # Update actor
+        actor_loss, alpha_loss = self._update_actor(states, regime)
 
-        # Update target networks only after gradient step
-        if not is_accumulation_step:
-            self._soft_update_targets()
+        # Update target networks
+        self._soft_update_targets()
+
+        # Update scaler once at the end (for mixed precision)
+        if self.use_amp:
+            self.scaler.update()
 
         return {
             'critic_loss': critic_loss,
@@ -847,13 +852,9 @@ class SACAgent:
         rewards: torch.Tensor,
         next_states: torch.Tensor,
         dones: torch.Tensor,
-        regime: Optional[str] = None,
-        is_accumulation_step: bool = False
+        regime: Optional[str] = None
     ) -> float:
-        """Update critic networks with mixed precision and gradient accumulation."""
-        # Mixed precision context
-        autocast_ctx = torch.cuda.amp.autocast() if self.use_amp else torch.no_grad
-
+        """Update critic networks with mixed precision."""
         with torch.no_grad():
             if self.use_amp:
                 with torch.cuda.amp.autocast():
@@ -894,6 +895,8 @@ class SACAgent:
                 target_q = rewards + (1 - dones) * self.config.gamma * target_q
 
         # Forward pass with mixed precision
+        self.critic_optimizer.zero_grad()
+
         if self.use_amp:
             with torch.cuda.amp.autocast():
                 if self.config.use_regime_qfuncs:
@@ -909,7 +912,17 @@ class SACAgent:
 
                 critic1_loss = F.mse_loss(current_q1, target_q)
                 critic2_loss = F.mse_loss(current_q2, target_q)
-                critic_loss = (critic1_loss + critic2_loss) / self.gradient_accumulation_steps
+                critic_loss = critic1_loss + critic2_loss
+
+            # Backward with gradient scaling
+            self.scaler.scale(critic_loss).backward()
+            self.scaler.unscale_(self.critic_optimizer)
+            torch.nn.utils.clip_grad_norm_(
+                self.critic1.parameters() if not self.config.use_regime_qfuncs else
+                list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
+                self.config.max_grad_norm
+            )
+            self.scaler.step(self.critic_optimizer)
         else:
             if self.config.use_regime_qfuncs:
                 if regime == 'low_vol':
@@ -924,122 +937,93 @@ class SACAgent:
 
             critic1_loss = F.mse_loss(current_q1, target_q)
             critic2_loss = F.mse_loss(current_q2, target_q)
-            critic_loss = (critic1_loss + critic2_loss) / self.gradient_accumulation_steps
+            critic_loss = critic1_loss + critic2_loss
 
-        # Backward pass
-        if not is_accumulation_step:
-            self.critic_optimizer.zero_grad()
-
-        if self.use_amp:
-            self.scaler.scale(critic_loss).backward()
-            if not is_accumulation_step:
-                self.scaler.unscale_(self.critic_optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.critic1.parameters() if not self.config.use_regime_qfuncs else
-                    list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
-                    self.config.max_grad_norm
-                )
-                self.scaler.step(self.critic_optimizer)
-                self.scaler.update()
-        else:
             critic_loss.backward()
-            if not is_accumulation_step:
-                torch.nn.utils.clip_grad_norm_(
-                    self.critic1.parameters() if not self.config.use_regime_qfuncs else
-                    list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
-                    self.config.max_grad_norm
-                )
-                self.critic_optimizer.step()
+            torch.nn.utils.clip_grad_norm_(
+                self.critic1.parameters() if not self.config.use_regime_qfuncs else
+                list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
+                self.config.max_grad_norm
+            )
+            self.critic_optimizer.step()
 
-        return critic_loss.item() * self.gradient_accumulation_steps
+        return critic_loss.item()
     
     def _update_actor(
         self,
         states: torch.Tensor,
-        regime: Optional[str] = None,
-        is_accumulation_step: bool = False
+        regime: Optional[str] = None
     ) -> Tuple[float, Optional[float]]:
-        """Update actor network and alpha with mixed precision and gradient accumulation."""
+        """Update actor network and alpha with mixed precision."""
+        self.actor_optimizer.zero_grad()
+
         # Forward pass with mixed precision
         if self.use_amp:
             with torch.cuda.amp.autocast():
                 actions, log_probs = self.actor.sample(states)
 
+                # Detach Q-values to prevent backprop through critic
                 if self.config.use_regime_qfuncs:
                     if regime == 'low_vol':
-                        q1 = self.critic1_low(states, actions)
-                        q2 = self.critic2_low(states, actions)
+                        q1 = self.critic1_low(states, actions).detach()
+                        q2 = self.critic2_low(states, actions).detach()
                     else:
-                        q1 = self.critic1_high(states, actions)
-                        q2 = self.critic2_high(states, actions)
+                        q1 = self.critic1_high(states, actions).detach()
+                        q2 = self.critic2_high(states, actions).detach()
                 else:
-                    q1 = self.critic1(states, actions)
-                    q2 = self.critic2(states, actions)
+                    q1 = self.critic1(states, actions).detach()
+                    q2 = self.critic2(states, actions).detach()
 
                 q = torch.min(q1, q2)
-                actor_loss = (self.alpha * log_probs - q).mean() / self.gradient_accumulation_steps
+                actor_loss = (self.alpha * log_probs - q).mean()
+
+            # Backward with gradient scaling
+            self.scaler.scale(actor_loss).backward()
+            self.scaler.unscale_(self.actor_optimizer)
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
+            self.scaler.step(self.actor_optimizer)
         else:
             actions, log_probs = self.actor.sample(states)
 
+            # Detach Q-values to prevent backprop through critic
             if self.config.use_regime_qfuncs:
                 if regime == 'low_vol':
-                    q1 = self.critic1_low(states, actions)
-                    q2 = self.critic2_low(states, actions)
+                    q1 = self.critic1_low(states, actions).detach()
+                    q2 = self.critic2_low(states, actions).detach()
                 else:
-                    q1 = self.critic1_high(states, actions)
-                    q2 = self.critic2_high(states, actions)
+                    q1 = self.critic1_high(states, actions).detach()
+                    q2 = self.critic2_high(states, actions).detach()
             else:
-                q1 = self.critic1(states, actions)
-                q2 = self.critic2(states, actions)
+                q1 = self.critic1(states, actions).detach()
+                q2 = self.critic2(states, actions).detach()
 
             q = torch.min(q1, q2)
-            actor_loss = (self.alpha * log_probs - q).mean() / self.gradient_accumulation_steps
+            actor_loss = (self.alpha * log_probs - q).mean()
 
-        # Backward pass
-        if not is_accumulation_step:
-            self.actor_optimizer.zero_grad()
-
-        if self.use_amp:
-            self.scaler.scale(actor_loss).backward()
-            if not is_accumulation_step:
-                self.scaler.unscale_(self.actor_optimizer)
-                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
-                self.scaler.step(self.actor_optimizer)
-                self.scaler.update()
-        else:
             actor_loss.backward()
-            if not is_accumulation_step:
-                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
-                self.actor_optimizer.step()
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
+            self.actor_optimizer.step()
 
         # Update alpha
         alpha_loss = None
         if self.config.auto_entropy_tuning:
+            self.alpha_optimizer.zero_grad()
+
             if self.use_amp:
                 with torch.cuda.amp.autocast():
                     alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+
+                self.scaler.scale(alpha_loss).backward()
+                self.scaler.step(self.alpha_optimizer)
             else:
                 alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
-
-            if not is_accumulation_step:
-                self.alpha_optimizer.zero_grad()
-
-            if self.use_amp:
-                self.scaler.scale(alpha_loss).backward()
-                if not is_accumulation_step:
-                    self.scaler.step(self.alpha_optimizer)
-                    self.scaler.update()
-            else:
                 alpha_loss.backward()
-                if not is_accumulation_step:
-                    self.alpha_optimizer.step()
+                self.alpha_optimizer.step()
 
-            if not is_accumulation_step:
-                self.alpha = self.log_alpha.exp()
-
+            self.alpha = self.log_alpha.exp()
             alpha_loss = alpha_loss.item()
 
-        return actor_loss.item() * self.gradient_accumulation_steps, alpha_loss
+        return actor_loss.item(), alpha_loss
     
     def _soft_update_targets(self):
         """Soft update target networks."""

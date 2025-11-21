@@ -700,7 +700,7 @@ class TradingEnvironment(gym.Env):
             n_trades_today
         )
         
-        # Calculate current drawdown for info (not used for termination)
+        # Calculate current drawdown (used for termination at 80%)
         current_dd = (self.peak_equity - current_equity) / self.peak_equity if self.peak_equity > 0 else 0.0
 
         # Check termination conditions
@@ -711,10 +711,25 @@ class TradingEnvironment(gym.Env):
         if self.current_step >= self.episode_length - 1:
             done = True
 
-        # 2. Balance = 0 (ruiné)
+        # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
+        if current_dd >= 0.80:
+            done = True
+            # Malus proportionnel à la précocité de l'arrêt (×10 pour signal très fort)
+            # Plus l'épisode se termine tôt, plus le malus est élevé
+            progress_ratio = self.current_step / self.episode_length
+            # Malus entre -100.0 (arrêt immédiat) et -50.0 (arrêt tardif)
+            early_stop_penalty = -100.0 + (50.0 * progress_ratio)
+            terminal_reward = early_stop_penalty
+            logger.warning(
+                f"Drawdown critique at step {self.current_step}/{self.episode_length} "
+                f"({progress_ratio:.1%} complete): DD={current_dd:.2%}, "
+                f"equity={current_equity:.2f}, penalty={early_stop_penalty:.2f}"
+            )
+
+        # 3. Balance = 0 (ruiné)
         if current_equity <= 0:
             done = True
-            terminal_reward = -10.0  # Severe penalty
+            terminal_reward = -100.0  # Severe penalty (augmenté pour cohérence)
             logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
 
         # Calculate terminal reward if done
