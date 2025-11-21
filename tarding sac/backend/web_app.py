@@ -303,7 +303,7 @@ def load_model():
         
         # Charger depuis checkpoint
         checkpoint = torch.load(model_path)
-        system_state.ensemble_controller.load_checkpoint(model_path)
+        system_state.ensemble_controller.load(model_path)
         
         system_state.current_model = Path(model_path).stem
         
@@ -690,7 +690,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
             # Charger depuis checkpoint si spécifié
             if from_checkpoint:
-                agent.load_checkpoint(from_checkpoint)
+                agent.load(from_checkpoint)
 
             agents.append(agent)
         
@@ -737,9 +737,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             if episode % 100 == 0:
                 checkpoint_path = Path(system_state.config['model']['checkpoint_dir']) / f'checkpoint_ep{episode}.pt'
                 checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-                
+
                 for i, agent in enumerate(agents):
-                    agent.save_checkpoint(str(checkpoint_path).replace('.pt', f'_agent{i}.pt'))
+                    agent.save(f'checkpoint_ep{episode}_agent{i}.pt')
         
         logger.info("Entraînement terminé")
         system_state.is_training = False
@@ -886,8 +886,8 @@ def run_validation_process(validator: ValidationFramework, model_path: str):
             hidden_dims=[256, 256]
         )
         agent = SACAgent(config=sac_config, agent_id=1)
-        agent.load_checkpoint(model_path)
-        
+        agent.load(model_path)
+
         # Exécuter validation walk-forward
         results = validator.walk_forward_validation(
             agent=agent,
