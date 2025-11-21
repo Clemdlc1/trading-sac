@@ -329,7 +329,8 @@ def load_model():
         )
         
         # Charger depuis checkpoint
-        checkpoint = torch.load(model_path)
+        # PyTorch 2.6+ nécessite weights_only=False pour charger des classes personnalisées
+        checkpoint = torch.load(model_path, weights_only=False)
         system_state.ensemble_controller.load(model_path)
         
         system_state.current_model = Path(model_path).stem
@@ -806,7 +807,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             )
             agent = SACAgent(config=sac_config, agent_id=agent_id)
             if from_checkpoint:
-                agent.load(from_checkpoint)
+                # Extraire seulement le nom du fichier (agent.load() ajoute le préfixe du dossier)
+                checkpoint_filename = Path(from_checkpoint).name
+                agent.load(checkpoint_filename)
             agents.append(agent)
             agent_indices = [agent_id]
         else:
@@ -821,8 +824,11 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 agent = SACAgent(config=sac_config, agent_id=i+3)
                 if from_checkpoint:
                     checkpoint_path = from_checkpoint.replace('.pt', f'_agent{i}.pt')
-                    if Path(checkpoint_path).exists():
-                        agent.load(checkpoint_path)
+                    # Extraire seulement le nom du fichier (agent.load() ajoute le préfixe du dossier)
+                    checkpoint_filename = Path(checkpoint_path).name
+                    checkpoint_full_path = Path(system_state.config['model']['checkpoint_dir']) / checkpoint_filename
+                    if checkpoint_full_path.exists():
+                        agent.load(checkpoint_filename)
                 agents.append(agent)
             agent_indices = list(range(len(agents)))
 
