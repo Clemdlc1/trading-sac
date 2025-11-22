@@ -987,6 +987,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
                     episode_reward += reward
                     episode_steps += 1
+                    agent.total_steps += 1  # CRITICAL: Increment total steps for LR scheduling
                     state = next_state
 
                     # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)

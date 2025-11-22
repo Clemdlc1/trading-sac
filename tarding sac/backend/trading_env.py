@@ -517,24 +517,50 @@ class TradingEnvironment(gym.Env):
         self.peak_equity = self.config.initial_capital
         self.total_trades = 0
         self.winning_trades = 0
-        
+
+        # Curriculum learning parameters
+        self.curriculum_stage = 0  # 0=short, 1=medium, 2=long episodes
+        self.episodes_completed = 0
+
         logger.info(f"Trading Environment initialized with {self.total_steps} steps")
     
     def reset(self) -> np.ndarray:
         """
         Reset environment for new episode.
-        
+
         Returns:
             Initial observation
         """
         # Reset reward calculator
         self.reward_calculator.reset()
-        
-        # Sample episode length
-        self.episode_length = np.random.choice(
-            self.config.episode_lengths,
-            p=self.config.episode_probs
-        )
+
+        # Sample episode length with curriculum learning
+        # Stage 0 (0-50 episodes): Only short episodes (1000 steps)
+        # Stage 1 (51-150 episodes): Short + Medium (1000, 3000 steps)
+        # Stage 2 (151+ episodes): All lengths (1000, 3000, 6000 steps)
+        if self.curriculum_stage == 0:
+            self.episode_length = self.config.episode_lengths[0]  # 1000 steps
+        elif self.curriculum_stage == 1:
+            self.episode_length = np.random.choice(
+                self.config.episode_lengths[:2],  # 1000, 3000
+                p=[0.5, 0.5]
+            )
+        else:
+            self.episode_length = np.random.choice(
+                self.config.episode_lengths,
+                p=self.config.episode_probs
+            )
+
+        # Increment episode counter and update curriculum stage
+        self.episodes_completed += 1
+        if self.episodes_completed > 150:
+            if self.curriculum_stage < 2:
+                self.curriculum_stage = 2
+                logger.info("📚 Curriculum: Advancing to Stage 2 (all episode lengths)")
+        elif self.episodes_completed > 50:
+            if self.curriculum_stage < 1:
+                self.curriculum_stage = 1
+                logger.info("📚 Curriculum: Advancing to Stage 1 (short + medium episodes)")
         
         # Set episode start (random or sequential)
         if self.eval_mode:
