@@ -71,8 +71,13 @@ class SACConfig:
 
     # Replay buffer
     buffer_capacity: int = 100000
-    batch_size: int = 512
+    batch_size: int = 256  # REDUCED from 512 - better for early training and less overfitting
     warmup_steps: int = 1000  # REDUCED from 10000 to 1000
+
+    # Adaptive batch sizing
+    use_adaptive_batch: bool = True
+    min_batch_size: int = 128  # Minimum batch size for very early training
+    adaptive_batch_threshold: int = 5000  # Buffer size to reach full batch_size
 
     # Regularization
     weight_decay: float = 1e-3
@@ -781,8 +786,25 @@ class SACAgent:
         Returns:
             Dictionary of losses
         """
+        # Adaptive batch sizing based on buffer fill level
+        if self.config.use_adaptive_batch:
+            buffer_size = len(self.replay_buffer)
+            if buffer_size < self.config.adaptive_batch_threshold:
+                # Scale batch size linearly with buffer fill
+                progress = buffer_size / self.config.adaptive_batch_threshold
+                current_batch_size = int(
+                    self.config.min_batch_size +
+                    (self.config.batch_size - self.config.min_batch_size) * progress
+                )
+                # Ensure we don't sample more than 25% of buffer
+                current_batch_size = min(current_batch_size, buffer_size // 4)
+            else:
+                current_batch_size = self.config.batch_size
+        else:
+            current_batch_size = self.config.batch_size
+
         # Sample batch
-        batch = self.replay_buffer.sample(self.config.batch_size)
+        batch = self.replay_buffer.sample(current_batch_size)
         if batch is None:
             return {}
 
