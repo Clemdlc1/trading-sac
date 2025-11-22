@@ -42,12 +42,12 @@ logger = logging.getLogger(__name__)
 class TradingEnvConfig:
     """Configuration for trading environment."""
     
-    # Initial capital
-    initial_capital: float = 100000.0  # $100k
+    # Initial capital - MASSIVE account for resilience
+    initial_capital: float = 500000.0  # $500k (5× more resilient!)
 
-    # Position sizing - EXTREMELY CONSERVATIVE for learning
-    risk_per_trade: float = 0.002  # 0.2% per trade (REDUCED from 2% - 10× safer!)
-    max_leverage: float = 5.0  # REDUCED from 30.0 - much safer
+    # Position sizing - ULTRA CONSERVATIVE: 2× leverage, 0.05% risk
+    risk_per_trade: float = 0.0005  # 0.05% per trade (4× safer than before!)
+    max_leverage: float = 2.0  # 2× maximum - extremely safe
     min_position_size: float = 0.01  # Minimum lot size
     
     # Stop-Loss and Take-Profit
@@ -357,27 +357,14 @@ class RewardCalculator:
         # - 200 steps with -100 total
         # - 450 steps should be -80 total (BETTER!)
         #
-        # To achieve this, survival must MASSIVELY outweigh trading losses
-        #
-        # With R_survival = 1.0 and 50% weight:
-        # - 200 steps: 200 × 1.0 × 0.50 × 0.70 × 10 = +700 contribution
-        # - 450 steps: 450 × 1.0 × 0.50 × 0.70 × 10 = +1575 contribution
-        #
-        # If trading loses -0.5/step on other components (50% weight):
-        # - 200 steps: 200 × (-0.5) × 0.50 × 0.70 × 10 = -350 (trading) + 700 (survival) = +350 total
-        # - 450 steps: 450 × (-0.5) × 0.50 × 0.70 × 10 = -787.5 (trading) + 1575 (survival) = +787.5 total
-        #
-        # Result: 450 steps is MUCH BETTER than 200 steps! ✅
-        R_survival = 10.0  # EXTREME! (10,000× from 0.001) - Must dominate bad trading!
-
-        # Total dense reward - 50/50 split between trading performance and survival
+        # NO SURVIVAL BONUS - Agent must learn profitable trading, not just survival
+        # Focus entirely on trading performance metrics
         dense_reward = (
-            0.15 * R_return +      # 15% - basic returns
-            0.15 * R_dsr +         # 15% - risk-adjusted returns
-            0.08 * R_downside +    # 8% - downside protection
-            0.07 * R_cost +        # 7% - cost control
-            0.05 * R_position +    # 5% - position management
-            0.50 * R_survival      # 50% - SURVIVAL IS PARAMOUNT!
+            0.40 * R_return +      # 40% - basic returns (MAIN OBJECTIVE)
+            0.40 * R_dsr +         # 40% - risk-adjusted returns (QUALITY)
+            0.10 * R_downside +    # 10% - downside protection
+            0.05 * R_cost +        # 5% - cost control
+            0.05 * R_position      # 5% - position management
         )
 
         return dense_reward
@@ -769,30 +756,17 @@ class TradingEnvironment(gym.Env):
         # 2. Drawdown >= 95% (VERY LENIENT - allow more learning time)
         if current_dd >= 0.95:
             done = True
-            # FIXED: Penalty based on ACTUAL steps survived, not episode_length
-            # This ensures consistency across different episode lengths
-            # Early death (< 500 steps) = harsh penalty
-            # Late death (> 1500 steps) = lighter penalty
-            if self.current_step < 500:
-                early_stop_penalty = -5.0  # Died very early
-            elif self.current_step < 1000:
-                early_stop_penalty = -4.0  # Died early
-            elif self.current_step < 1500:
-                early_stop_penalty = -3.0  # Died mid-episode
-            else:
-                early_stop_penalty = -2.0  # At least survived a while
-
-            terminal_reward = early_stop_penalty
+            # NO PENALTY - Let natural trading rewards/losses teach the agent
             logger.warning(
                 f"Drawdown critique at step {self.current_step} "
                 f"(planned: {self.episode_length}): DD={current_dd:.2%}, "
-                f"equity={current_equity:.2f}, penalty={early_stop_penalty:.2f}"
+                f"equity={current_equity:.2f}"
             )
 
         # 3. Balance = 0 (ruiné)
         if current_equity <= 0:
             done = True
-            terminal_reward = -5.0  # With reward_scale=10, becomes -50 total
+            # NO PENALTY - Natural losses already reflected in returns
             logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
 
         # Calculate terminal reward if done
