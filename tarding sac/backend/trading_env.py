@@ -44,10 +44,10 @@ class TradingEnvConfig:
     
     # Initial capital
     initial_capital: float = 100000.0  # $100k
-    
-    # Position sizing
-    risk_per_trade: float = 0.02  # 2% per trade
-    max_leverage: float = 30.0  # EU regulation
+
+    # Position sizing - EXTREMELY CONSERVATIVE for learning
+    risk_per_trade: float = 0.002  # 0.2% per trade (REDUCED from 2% - 10× safer!)
+    max_leverage: float = 5.0  # REDUCED from 30.0 - much safer
     min_position_size: float = 0.01  # Minimum lot size
     
     # Stop-Loss and Take-Profit
@@ -338,12 +338,14 @@ class RewardCalculator:
         # Always penalize costs proportionally (removed threshold to simplify)
         R_cost = -transaction_cost / initial_capital
         
-        # Component 5: Position Change Penalty (5%)
-        # Gentler penalty - encourage some trading
+        # Component 5: Position Management (5%)
+        # STRONG penalty for large positions to prevent account blowup
+        # Encourage conservative trading during learning
         if n_trades_today > 20:  # INCREASED threshold from 10 to 20
-            R_position = -(n_trades_today - 20) ** 2 * 0.0002  # REDUCED coefficient
+            R_position = -(n_trades_today - 20) ** 2 * 0.001  # Overtrading penalty
         else:
-            R_position = -position_change * 0.0005  # REDUCED from 0.001
+            # Penalty proportional to position size to encourage small positions
+            R_position = -position_change * 0.01  # INCREASED from 0.0005 - discourage large trades!
         
         # Component 6: ULTRA-HIGH Survival bonus to DOMINATE trading losses
         # GOAL: Make surviving longer ALWAYS better, even with terrible trading
