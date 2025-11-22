@@ -1077,8 +1077,18 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     # Stocker dans replay buffer
                     agent.replay_buffer.push(state, action, reward, next_state, done)
 
-                    # Update agent: REDUCED from 4 to 2 updates per step to prevent overfitting
-                    if len(agent.replay_buffer) > batch_size:
+                    # Update agent: ONLY AFTER WARMUP IS COMPLETE
+                    # CRITICAL FIX: Don't update during warmup when actions are forced to 0
+                    # This prevents learning biased policy from forced actions
+                    if len(agent.replay_buffer) > batch_size and env.global_step_count >= env.config.no_trading_warmup_steps:
+                        # Log once when updates start (after warmup)
+                        if env.global_step_count == env.config.no_trading_warmup_steps:
+                            logger.info("="*80)
+                            logger.info(f"🚀 WARMUP COMPLETE - Network updates starting!")
+                            logger.info(f"   Buffer filled with {len(agent.replay_buffer)} transitions")
+                            logger.info(f"   Agent will now learn from its own actions (not forced actions)")
+                            logger.info("="*80)
+
                         # Faire 2 updates consécutifs (REDUCED from 4)
                         # Reasoning: 4×512 = 2048 samples/step was too aggressive
                         # Now: 2×256 = 512 samples/step (much better ratio)

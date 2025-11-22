@@ -68,7 +68,9 @@ class TradingEnvConfig:
     episode_probs: List[float] = field(default_factory=lambda: [1.0])  # 100% probability
 
     # Learning phases
-    no_trading_warmup_steps: int = 20000  # First 20k steps: ZERO trading, pure survival learning!
+    # REDUCED from 20000 to 5000 to match SAC warmup_steps and reduce bias from forced actions
+    # During warmup: actions forced to 0, buffer fills, but networks don't update
+    no_trading_warmup_steps: int = 5000  # First 5k steps: ZERO trading, buffer filling phase
     
     # Reward function parameters
     dense_weight: float = 0.70  # INCREASED from 0.40 - more immediate feedback
