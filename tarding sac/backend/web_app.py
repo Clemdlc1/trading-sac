@@ -930,19 +930,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
         logger.info(f"Agents créés: {len(agents)}")
 
-        # Historique des métriques pour les graphiques (SANS LIMITE - tout l'historique)
-        # Charger l'historique existant s'il existe
-        metrics_file = Path('logs/training_metrics.json')
-        if metrics_file.exists() and not from_checkpoint:
-            try:
-                with open(metrics_file, 'r') as f:
-                    metrics_history = json.load(f)
-                logger.info(f"Métriques chargées: {len(metrics_history.get('episodes', []))} épisodes précédents")
-            except:
-                metrics_history = initialize_metrics_history()
-        else:
-            metrics_history = initialize_metrics_history()
-
+        # Fonction pour initialiser l'historique des métriques
         def initialize_metrics_history():
             """Initialise toutes les métriques à tracker (style TensorBoard)"""
             return {
@@ -999,8 +987,17 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 'critic_grad_norm': [],
             }
 
-        # Réinitialiser si besoin
-        if not metrics_file.exists() or not from_checkpoint:
+        # Historique des métriques pour les graphiques (SANS LIMITE - tout l'historique)
+        # Charger l'historique existant s'il existe
+        metrics_file = Path('logs/training_metrics.json')
+        if metrics_file.exists() and not from_checkpoint:
+            try:
+                with open(metrics_file, 'r') as f:
+                    metrics_history = json.load(f)
+                logger.info(f"Métriques chargées: {len(metrics_history.get('episodes', []))} épisodes précédents")
+            except:
+                metrics_history = initialize_metrics_history()
+        else:
             metrics_history = initialize_metrics_history()
 
         # Logger pour les transitions (pour CSV)
