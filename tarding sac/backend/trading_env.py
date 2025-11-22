@@ -63,9 +63,9 @@ class TradingEnvConfig:
     margin_call_threshold: float = 0.20  # 20% of initial capital
     max_drawdown_threshold: float = 0.20  # 20% max drawdown
     
-    # Episode parameters
-    episode_lengths: List[int] = field(default_factory=lambda: [1000, 3000, 6000])
-    episode_probs: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.2])
+    # Episode parameters - FIXED LENGTH for consistent rewards
+    episode_lengths: List[int] = field(default_factory=lambda: [3000])  # FIXED to 3000 only
+    episode_probs: List[float] = field(default_factory=lambda: [1.0])  # 100% probability
     
     # Reward function parameters
     dense_weight: float = 0.70  # INCREASED from 0.40 - more immediate feedback
@@ -284,10 +284,10 @@ class RewardCalculator:
     ) -> float:
         """
         Calculate dense reward (per step).
-        
+
         Formula:
-        dense_reward = 0.30 × R_return + 0.30 × R_dsr + 0.20 × R_downside 
-                     + 0.15 × R_cost + 0.05 × R_position_change
+        dense_reward = 0.15 × R_return + 0.15 × R_dsr + 0.08 × R_downside
+                     + 0.07 × R_cost + 0.05 × R_position + 0.50 × R_survival
         
         Args:
             equity_t: Current equity
@@ -345,15 +345,36 @@ class RewardCalculator:
         else:
             R_position = -position_change * 0.0005  # REDUCED from 0.001
         
-        # Total dense reward
+        # Component 6: ULTRA-HIGH Survival bonus to DOMINATE trading losses
+        # GOAL: Make surviving longer ALWAYS better, even with terrible trading
+        #
+        # User requirement:
+        # - 200 steps with -100 total
+        # - 450 steps should be -80 total (BETTER!)
+        #
+        # To achieve this, survival must MASSIVELY outweigh trading losses
+        #
+        # With R_survival = 1.0 and 50% weight:
+        # - 200 steps: 200 × 1.0 × 0.50 × 0.70 × 10 = +700 contribution
+        # - 450 steps: 450 × 1.0 × 0.50 × 0.70 × 10 = +1575 contribution
+        #
+        # If trading loses -0.5/step on other components (50% weight):
+        # - 200 steps: 200 × (-0.5) × 0.50 × 0.70 × 10 = -350 (trading) + 700 (survival) = +350 total
+        # - 450 steps: 450 × (-0.5) × 0.50 × 0.70 × 10 = -787.5 (trading) + 1575 (survival) = +787.5 total
+        #
+        # Result: 450 steps is MUCH BETTER than 200 steps! ✅
+        R_survival = 1.0  # ULTRA HIGH! (1000× increase from 0.001)
+
+        # Total dense reward - 50/50 split between trading performance and survival
         dense_reward = (
-            0.30 * R_return +
-            0.30 * R_dsr +
-            0.20 * R_downside +
-            0.15 * R_cost +
-            0.05 * R_position
+            0.15 * R_return +      # 15% - basic returns
+            0.15 * R_dsr +         # 15% - risk-adjusted returns
+            0.08 * R_downside +    # 8% - downside protection
+            0.07 * R_cost +        # 7% - cost control
+            0.05 * R_position +    # 5% - position management
+            0.50 * R_survival      # 50% - SURVIVAL IS PARAMOUNT!
         )
-        
+
         return dense_reward
     
     def calculate_terminal_reward(
@@ -555,33 +576,8 @@ class TradingEnvironment(gym.Env):
         # Reset reward calculator
         self.reward_calculator.reset()
 
-        # Sample episode length with curriculum learning
-        # Stage 0 (0-50 episodes): Only short episodes (1000 steps)
-        # Stage 1 (51-150 episodes): Short + Medium (1000, 3000 steps)
-        # Stage 2 (151+ episodes): All lengths (1000, 3000, 6000 steps)
-        if self.curriculum_stage == 0:
-            self.episode_length = self.config.episode_lengths[0]  # 1000 steps
-        elif self.curriculum_stage == 1:
-            self.episode_length = np.random.choice(
-                self.config.episode_lengths[:2],  # 1000, 3000
-                p=[0.5, 0.5]
-            )
-        else:
-            self.episode_length = np.random.choice(
-                self.config.episode_lengths,
-                p=self.config.episode_probs
-            )
-
-        # Increment episode counter and update curriculum stage
-        self.episodes_completed += 1
-        if self.episodes_completed > 150:
-            if self.curriculum_stage < 2:
-                self.curriculum_stage = 2
-                logger.info("📚 Curriculum: Advancing to Stage 2 (all episode lengths)")
-        elif self.episodes_completed > 50:
-            if self.curriculum_stage < 1:
-                self.curriculum_stage = 1
-                logger.info("📚 Curriculum: Advancing to Stage 1 (short + medium episodes)")
+        # FIXED episode length (no curriculum, always 3000 steps)
+        self.episode_length = self.config.episode_lengths[0]  # Always 3000
         
         # Set episode start (random or sequential)
         if self.eval_mode:
@@ -761,13 +757,23 @@ class TradingEnvironment(gym.Env):
         # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
         if current_dd >= 0.80:
             done = True
-            # ADJUSTED for reward_scale=10: -5 to -2 (will be scaled to -50 to -20)
-            progress_ratio = self.current_step / self.episode_length
-            early_stop_penalty = -5.0 + (3.0 * progress_ratio)  # -5 to -2
+            # FIXED: Penalty based on ACTUAL steps survived, not episode_length
+            # This ensures consistency across different episode lengths
+            # Early death (< 500 steps) = harsh penalty
+            # Late death (> 1500 steps) = lighter penalty
+            if self.current_step < 500:
+                early_stop_penalty = -5.0  # Died very early
+            elif self.current_step < 1000:
+                early_stop_penalty = -4.0  # Died early
+            elif self.current_step < 1500:
+                early_stop_penalty = -3.0  # Died mid-episode
+            else:
+                early_stop_penalty = -2.0  # At least survived a while
+
             terminal_reward = early_stop_penalty
             logger.warning(
-                f"Drawdown critique at step {self.current_step}/{self.episode_length} "
-                f"({progress_ratio:.1%} complete): DD={current_dd:.2%}, "
+                f"Drawdown critique at step {self.current_step} "
+                f"(planned: {self.episode_length}): DD={current_dd:.2%}, "
                 f"equity={current_equity:.2f}, penalty={early_stop_penalty:.2f}"
             )
 
@@ -779,11 +785,23 @@ class TradingEnvironment(gym.Env):
 
         # Calculate terminal reward if done
         if done and terminal_reward == 0.0:
+            # Episode completed normally (reached episode_length)
             terminal_reward = self.reward_calculator.calculate_terminal_reward(
                 self.returns_buffer,
                 self.equity_curve,
                 self.trades
             )
+
+            # BONUS: Reward for completing full episode without catastrophic failure
+            # Scaled by actual completion ratio
+            completion_ratio = self.current_step / self.episode_length
+            if completion_ratio >= 0.95:  # Completed at least 95% of episode
+                survival_bonus = 2.0  # Significant bonus for full completion
+                terminal_reward += survival_bonus
+                logger.info(
+                    f"Episode completed successfully! Steps: {self.current_step}/"
+                    f"{self.episode_length}, bonus: +{survival_bonus:.2f}"
+                )
 
         # Combine rewards
         total_reward = (
