@@ -60,7 +60,7 @@ class SACConfig:
     # Learning parameters
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
-    alpha_lr: float = 3e-4
+    alpha_lr: float = 3e-5
     gamma: float = 0.95
     tau: float = 0.005
 

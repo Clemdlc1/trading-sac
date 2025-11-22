@@ -77,7 +77,7 @@ class TradingEnvConfig:
     terminal_weight: float = 0.30  # DECREASED from 0.60 - less delayed signal
 
     # Reward scaling to improve learning signal
-    reward_scale: float = 10.0  # Scale up rewards for better gradients
+    reward_scale: float = 1.0  # Scale up rewards for better gradients
 
     # DSR parameters (Differential Sharpe Ratio)
     dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation
@@ -347,7 +347,7 @@ class RewardCalculator:
         # STRONG penalty for large positions to prevent account blowup
         # Encourage conservative trading during learning
         if n_trades_today > 20:  # INCREASED threshold from 10 to 20
-            R_position = -(n_trades_today - 20) ** 2 * 0.001  # Overtrading penalty
+            R_position = -(n_trades_today - 20) ** 2 * 0.0001  # Overtrading penalty
         else:
             # Penalty proportional to position size to encourage small positions
             R_position = -position_change * 0.01  # INCREASED from 0.0005 - discourage large trades!
@@ -681,7 +681,7 @@ class TradingEnvironment(gym.Env):
         # CRITICAL FIX: Require minimum meaningful position change to count as trade
         # This prevents micro-adjustments from stochastic policy counting as trades
         # Threshold: 10% of typical position size (≈0.02 lots for 100k account)
-        MIN_POSITION_CHANGE = 0.02  # Minimum lots to trigger a trade
+        MIN_POSITION_CHANGE = 0.1  # Minimum lots to trigger a trade
 
         if position_change > MIN_POSITION_CHANGE:
             # Calculate transaction cost
