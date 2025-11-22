@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAC Trading System - Dashboard Premium</title>
+
+    <!-- CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
+
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+</head>
+<body class="page-transition">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-light">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-chart-line"></i> SAC Trading System
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/">
+                            <i class="fas fa-home"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/models">
+                            <i class="fas fa-brain"></i> Modèles
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/config">
+                            <i class="fas fa-cog"></i> Configuration
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/validation">
+                            <i class="fas fa-check-circle"></i> Validation
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dataset">
+                            <i class="fas fa-database"></i> Dataset
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <span class="navbar-text">
+                            <i class="fas fa-circle connected" id="connection-status"></i>
+                            <span id="connection-text">Connecté</span>
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container-fluid mt-4 px-4">
+        <!-- Status Cards Row -->
+        <div class="row mb-4 g-3">
+            <div class="col-xl-3 col-md-6">
+                <div class="card bg-primary text-white status-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="card-title mb-2">Equity Actuelle</h6>
+                                <h3 class="mb-0" id="equity-value">$10,000.00</h3>
+                                <small class="opacity-75" id="equity-change">+0.00%</small>
+                            </div>
+                            <i class="fas fa-wallet fa-3x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6">
+                <div class="card bg-success text-white status-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="card-title mb-2">P&L Aujourd'hui</h6>
+                                <h3 class="mb-0" id="pnl-value">$0.00</h3>
+                                <small class="opacity-75" id="pnl-percent">0.00%</small>
+                            </div>
+                            <i class="fas fa-chart-line fa-3x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6">
+                <div class="card bg-warning text-white status-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="card-title mb-2">Position Actuelle</h6>
+                                <h3 class="mb-0" id="position-value">0.00</h3>
+                                <small class="opacity-75" id="position-type">Aucune</small>
+                            </div>
+                            <i class="fas fa-exchange-alt fa-3x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6">
+                <div class="card bg-info text-white status-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="card-title mb-2">Trades Aujourd'hui</h6>
+                                <h3 class="mb-0" id="trades-count">0</h3>
+                                <small class="opacity-75" id="win-rate-display">Win Rate: 0%</small>
+                            </div>
+                            <i class="fas fa-list-alt fa-3x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card hover-lift">
+                    <div class="card-header">
+                        <h5><i class="fas fa-sliders-h"></i> Panneau de Contrôle</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row align-items-end g-3">
+                            <div class="col-lg-3 col-md-6">
+                                <label class="form-label">Modèle Actuel</label>
+                                <input type="text" class="form-control" id="current-model" readonly placeholder="Aucun modèle chargé">
+                            </div>
+                            <div class="col-lg-3 col-md-6">
+                                <label class="form-label">Statut Entraînement</label>
+                                <div>
+                                    <span class="badge bg-secondary" id="training-status">
+                                        <i class="fas fa-stop-circle"></i> Non actif
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="col-lg-3 col-md-6">
+                                <label class="form-label">Statut Trading</label>
+                                <div>
+                                    <span class="badge bg-secondary" id="trading-status">
+                                        <i class="fas fa-stop-circle"></i> Non actif
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="col-lg-3 col-md-6">
+                                <label class="form-label">Actions</label>
+                                <div class="btn-group w-100" role="group">
+                                    <button class="btn btn-success" id="btn-start-trading">
+                                        <i class="fas fa-play"></i> Démarrer
+                                    </button>
+                                    <button class="btn btn-danger" id="btn-stop-trading" disabled>
+                                        <i class="fas fa-stop"></i> Arrêter
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="row mb-4">
+            <!-- Equity Chart -->
+            <div class="col-xl-8 col-lg-7">
+                <div class="card hover-lift">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-chart-area"></i> Courbe d'Equity</h5>
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-primary active" data-period="1d">1D</button>
+                            <button type="button" class="btn btn-outline-primary" data-period="1w">1S</button>
+                            <button type="button" class="btn btn-outline-primary" data-period="1m">1M</button>
+                            <button type="button" class="btn btn-outline-primary" data-period="all">Tout</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="equity-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Metrics -->
+            <div class="col-xl-4 col-lg-5">
+                <div class="card hover-lift">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie"></i> Métriques de Performance</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric-card mb-3">
+                            <p class="metric-label mb-2">Sharpe Ratio</p>
+                            <h3 class="metric-value" id="sharpe-ratio">-</h3>
+                        </div>
+                        <div class="metric-card mb-3">
+                            <p class="metric-label mb-2">Maximum Drawdown</p>
+                            <h3 class="metric-value metric-negative" id="max-drawdown">-</h3>
+                        </div>
+                        <div class="metric-card mb-3">
+                            <p class="metric-label mb-2">Win Rate</p>
+                            <h3 class="metric-value" id="win-rate">-</h3>
+                        </div>
+                        <div class="metric-card mb-0">
+                            <p class="metric-label mb-2">Profit Factor</p>
+                            <h3 class="metric-value metric-positive" id="profit-factor">-</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Charts Row -->
+        <div class="row mb-4">
+            <!-- P&L Distribution -->
+            <div class="col-xl-6 col-lg-6">
+                <div class="card hover-lift">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-bar"></i> Distribution P&L</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="pnl-distribution-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Position Size Over Time -->
+            <div class="col-xl-6 col-lg-6">
+                <div class="card hover-lift">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-line"></i> Taille des Positions</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="position-size-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Trades -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card hover-lift">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-history"></i> Trades Récents</h5>
+                        <button class="btn btn-sm btn-primary" id="btn-refresh-trades">
+                            <i class="fas fa-sync-alt"></i> Actualiser
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle" id="trades-table">
+                                <thead>
+                                    <tr>
+                                        <th><i class="fas fa-clock"></i> Timestamp</th>
+                                        <th><i class="fas fa-exchange-alt"></i> Type</th>
+                                        <th><i class="fas fa-balance-scale"></i> Taille</th>
+                                        <th><i class="fas fa-dollar-sign"></i> Prix</th>
+                                        <th><i class="fas fa-shield-alt"></i> SL</th>
+                                        <th><i class="fas fa-bullseye"></i> TP</th>
+                                        <th><i class="fas fa-chart-line"></i> P&L</th>
+                                        <th><i class="fas fa-info-circle"></i> Statut</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="8" class="text-center text-muted py-5">
+                                            <i class="fas fa-inbox fa-3x mb-3 d-block opacity-25"></i>
+                                            <p class="mb-0">Aucun trade récent</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer Stats -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card hover-lift">
+                    <div class="card-body">
+                        <div class="row text-center g-3">
+                            <div class="col-md-2 col-6">
+                                <p class="metric-label mb-2">Total Trades</p>
+                                <h4 class="metric-value" id="total-trades">0</h4>
+                            </div>
+                            <div class="col-md-2 col-6">
+                                <p class="metric-label mb-2">Avg Win</p>
+                                <h4 class="metric-value metric-positive" id="avg-win">$0.00</h4>
+                            </div>
+                            <div class="col-md-2 col-6">
+                                <p class="metric-label mb-2">Avg Loss</p>
+                                <h4 class="metric-value metric-negative" id="avg-loss">$0.00</h4>
+                            </div>
+                            <div class="col-md-2 col-6">
+                                <p class="metric-label mb-2">Best Trade</p>
+                                <h4 class="metric-value metric-positive" id="best-trade">$0.00</h4>
+                            </div>
+                            <div class="col-md-2 col-6">
+                                <p class="metric-label mb-2">Worst Trade</p>
+                                <h4 class="metric-value metric-negative" id="worst-trade">$0.00</h4>
+                            </div>
+                            <div class="col-md-2 col-6">
+                                <p class="metric-label mb-2">Avg Duration</p>
+                                <h4 class="metric-value" id="avg-duration">0h 0m</h4>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

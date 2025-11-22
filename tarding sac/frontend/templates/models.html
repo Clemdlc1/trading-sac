@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAC Trading System - Gestion des Modèles</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+</head>
+<body class="page-transition">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-light">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-chart-line"></i> SAC Trading System
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">
+                            <i class="fas fa-home"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/models">
+                            <i class="fas fa-brain"></i> Modèles
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/config">
+                            <i class="fas fa-cog"></i> Configuration
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/validation">
+                            <i class="fas fa-check-circle"></i> Validation
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dataset">
+                            <i class="fas fa-database"></i> Dataset
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <span class="navbar-text">
+                            <i class="fas fa-circle connected" id="connection-status"></i>
+                            <span id="connection-text">Connecté</span>
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4 px-4">
+        <!-- Page Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h2 class="text-gradient">
+                    <i class="fas fa-brain"></i> Gestion des Modèles
+                </h2>
+                <p class="text-muted">Entraînez et gérez vos agents de trading SAC</p>
+            </div>
+        </div>
+
+        <!-- Training Section -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card hover-lift">
+                    <div class="card-header">
+                        <h5><i class="fas fa-graduation-cap"></i> Entraînement de Nouveaux Modèles</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="training-form">
+                            <div class="row">
+                                <div class="col-md-2">
+                                    <div class="mb-3">
+                                        <label class="form-label">Nombre d'Épisodes</label>
+                                        <input type="number" class="form-control" id="num-episodes" value="1000" min="100">
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="mb-3">
+                                        <label class="form-label">Batch Size</label>
+                                        <input type="number" class="form-control" id="batch-size" value="256" min="32">
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="mb-3">
+                                        <label class="form-label">Agent à entraîner</label>
+                                        <select class="form-select" id="agent-select">
+                                            <option value="">Tous les agents</option>
+                                            <option value="3">Sharpe Optimized (γ=0.95)</option>
+                                            <option value="4">Sortino Optimized (γ=0.97)</option>
+                                            <option value="5">Aggressive (γ=0.93)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="mb-3">
+                                        <label class="form-label">Depuis Checkpoint (optionnel)</label>
+                                        <select class="form-select" id="from-checkpoint">
+                                            <option value="">Nouveau modèle</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="mb-3">
+                                        <label class="form-label">&nbsp;</label>
+                                        <div class="d-flex gap-2">
+                                            <button type="submit" class="btn btn-primary flex-grow-1">
+                                                <i class="fas fa-play"></i> Démarrer SAC
+                                            </button>
+                                            <button type="button" class="btn btn-success" id="btn-train-meta">
+                                                <i class="fas fa-brain"></i> Meta-Controller
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                        
+                        <!-- Progress Bar -->
+                        <div id="training-progress" class="mt-3" style="display: none;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6>Progression de l'entraînement</h6>
+                                <button class="btn btn-danger btn-sm" id="btn-stop-training">
+                                    <i class="fas fa-stop"></i> Arrêter
+                                </button>
+                            </div>
+
+                            <!-- Device Info -->
+                            <div class="alert mb-2" id="device-info" style="display: none;">
+                                <i class="fas fa-microchip"></i>
+                                <strong>Device:</strong> <span id="device-name">Detecting...</span>
+                            </div>
+
+                            <div class="progress mb-2">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                     role="progressbar" id="progress-bar"></div>
+                            </div>
+                            <div class="mb-2">
+                                <strong id="training-info">Épisode 0/1000 - Agent: N/A</strong>
+                            </div>
+
+                            <!-- Episode Progress Bar -->
+                            <div class="mt-2 mb-3">
+                                <small class="text-muted">Progression de l'épisode en cours</small>
+                                <div class="progress" style="height: 15px;">
+                                    <div class="progress-bar bg-info progress-bar-striped"
+                                         role="progressbar" id="episode-progress-bar" style="width: 0%">
+                                        <small id="episode-progress-text">0/0 steps</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Statistiques d'épisode -->
+                            <div class="alert alert-info mb-3" id="episode-stats">
+                                <small>
+                                    <strong>Statistiques de l'épisode:</strong><br>
+                                    Total trades: <span id="stat-total-trades">0</span> |
+                                    Winning: <span id="stat-winning-trades">0</span> |
+                                    Losing: <span id="stat-losing-trades">0</span> |
+                                    Final Equity: $<span id="stat-final-equity">0</span>
+                                </small>
+                            </div>
+
+                            <!-- Métriques détaillées -->
+                            <div class="row mt-3">
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Reward</small>
+                                            <strong id="metric-reward">0.00</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Steps</small>
+                                            <strong id="metric-steps">0</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Sharpe Ratio</small>
+                                            <strong id="metric-sharpe">0.00</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Win Rate</small>
+                                            <strong id="metric-winrate">0%</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-2">
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Sortino Ratio</small>
+                                            <strong id="metric-sortino">0.00</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Max Drawdown</small>
+                                            <strong id="metric-dd">0%</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Profit Factor</small>
+                                            <strong id="metric-pf">0.00</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Total Return</small>
+                                            <strong id="metric-return">0%</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-2" id="loss-metrics" style="display: none;">
+                                <div class="col-md-6">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Critic Loss</small>
+                                            <strong id="metric-critic-loss">0.00</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card bg-light">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted d-block">Actor Loss</small>
+                                            <strong id="metric-actor-loss">0.00</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Graphiques d'évolution -->
+                            <div class="row mt-4">
+                                <div class="col-md-12">
+                                    <h6>📊 Évolution des Métriques de Performance</h6>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-reward"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-sharpe"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-winrate"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <canvas id="chart-returns"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Nouveaux graphiques détaillés -->
+                            <div class="row mt-4">
+                                <div class="col-md-12">
+                                    <h6>📉 Métriques d'Entraînement (Losses & SAC)</h6>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Critic Loss</small>
+                                            <canvas id="chart-critic-loss"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Actor Loss</small>
+                                            <canvas id="chart-actor-loss"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Alpha Loss</small>
+                                            <canvas id="chart-alpha-loss"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
+                                <div class="col-md-12">
+                                    <h6>🔧 Paramètres SAC</h6>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Alpha (Temperature)</small>
+                                            <canvas id="chart-alpha-value"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Actor Learning Rate</small>
+                                            <canvas id="chart-actor-lr"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Critic Learning Rate</small>
+                                            <canvas id="chart-critic-lr"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
+                                <div class="col-md-12">
+                                    <h6>🎲 Exploration & Buffer</h6>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Action Mean</small>
+                                            <canvas id="chart-action-mean"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Action Std Dev</small>
+                                            <canvas id="chart-action-std"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Buffer Size</small>
+                                            <canvas id="chart-buffer-size"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
+                                <div class="col-md-12">
+                                    <h6>💰 Trades & Équité</h6>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Nombre de Trades</small>
+                                            <canvas id="chart-trades-count"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Équité Finale</small>
+                                            <canvas id="chart-final-equity"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Available Models -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card hover-lift">
+                    <div class="card-header">
+                        <h5><i class="fas fa-folder"></i> Checkpoints</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="checkpoints-table">
+                                <thead>
+                                    <tr>
+                                        <th>Nom</th>
+                                        <th>Taille</th>
+                                        <th>Date</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted">
+                                            Chargement...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card hover-lift">
+                    <div class="card-header">
+                        <h5><i class="fas fa-rocket"></i> Modèles de Production</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="production-table">
+                                <thead>
+                                    <tr>
+                                        <th>Nom</th>
+                                        <th>Taille</th>
+                                        <th>Date</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted">
+                                            Chargement...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal pour détails du modèle -->
+    <div class="modal fade" id="modelDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Détails du Modèle</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="model-details-content">
+                    <!-- Sera rempli dynamiquement -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/static/js/models.js"></script>
+</body>
+</html>
