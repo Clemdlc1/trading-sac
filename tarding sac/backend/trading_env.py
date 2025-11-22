@@ -385,33 +385,38 @@ class RewardCalculator:
         # Component 1: Sortino Ratio (35%)
         mean_return = np.mean(returns_array)
         downside_returns = returns_array[returns_array < 0]
-        
+
         if len(downside_returns) > 0:
             downside_std = np.std(downside_returns)
             sortino = mean_return / (downside_std + 1e-8)
-            R_sortino = (sortino - 1.5) / 0.5
+            # ADJUSTED: Center at 0.5 (more realistic), normalize to [-2, +2]
+            R_sortino = np.clip((sortino - 0.5) / 0.75, -2.0, 2.0)
         else:
             R_sortino = 2.0  # Perfect score if no downside
         
         # Component 2: Calmar Ratio (25%)
         annual_return = mean_return * 252 * 288  # Annualize
         max_dd = self._calculate_max_drawdown(equity_curve)
-        
+
         if max_dd > 1e-6:
             calmar = annual_return / max_dd
-            R_calmar = (calmar - 2.0) / 0.5
+            # ADJUSTED: Center at 1.0 (realistic target), normalize to [-2, +2]
+            R_calmar = np.clip((calmar - 1.0) / 1.0, -2.0, 2.0)
         else:
-            R_calmar = 0.0
+            # No drawdown but positive return = excellent
+            R_calmar = 2.0 if annual_return > 0 else 0.0
         
         # Component 3: Drawdown Penalty (25%)
+        # ADJUSTED: Gentler penalties, normalize to [-2, 0]
         if max_dd < 0.05:
             R_drawdown = 0.0
-        elif max_dd < 0.10:
-            R_drawdown = -0.02 * max_dd
+        elif max_dd < 0.15:
+            R_drawdown = -max_dd * 10.0  # Linear: -0.5 at 5%, -1.5 at 15%
         else:
-            R_drawdown = -0.15 * (max_dd ** 2)  # Quadratic penalty
+            # Quadratic penalty for severe drawdowns
+            R_drawdown = np.clip(-0.15 * (max_dd ** 2) * 50, -2.0, 0.0)
         
-        # Component 4: Expectancy (15%)
+        # Component 4: Expectancy Ratio (15%)
         if len(trades) > 5:  # REDUCED from 10 to 5 to encourage initial exploration
             trade_pnls = [t['pnl'] for t in trades]
             winning = [p for p in trade_pnls if p > 0]
@@ -421,12 +426,19 @@ class RewardCalculator:
                 win_rate = len(winning) / len(trades)
                 avg_win = np.mean(winning)
                 avg_loss = np.mean(np.abs(losing))
-                expectancy = win_rate * avg_win - (1 - win_rate) * avg_loss
-                R_expectancy = (expectancy - 20) / 10
+
+                # FIXED: Use profit factor (ratio) instead of expectancy (dollars)
+                profit_factor = (win_rate * avg_win) / ((1 - win_rate) * avg_loss + 1e-8)
+                # Center at 1.3 (breakeven after costs), normalize to [-2, +2]
+                R_expectancy = np.clip((profit_factor - 1.3) / 0.7, -2.0, 2.0)
             else:
-                R_expectancy = -0.2  # REDUCED from -0.5
+                # Only winners or only losers
+                if len(winning) > 0:
+                    R_expectancy = 1.0  # All winning trades
+                else:
+                    R_expectancy = -1.5  # All losing trades
         else:
-            R_expectancy = -0.3  # REDUCED from -1.0 to encourage exploration
+            R_expectancy = -0.5  # Gentle penalty for few trades
         
         # Total terminal reward
         terminal_reward = (
@@ -749,9 +761,9 @@ class TradingEnvironment(gym.Env):
         # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
         if current_dd >= 0.80:
             done = True
-            # REDUCED penalty from -100/-10 to -20/-5 to avoid dominating learning signal
+            # ADJUSTED for reward_scale=10: -5 to -2 (will be scaled to -50 to -20)
             progress_ratio = self.current_step / self.episode_length
-            early_stop_penalty = -20.0 + (15.0 * progress_ratio)  # -20 to -5
+            early_stop_penalty = -5.0 + (3.0 * progress_ratio)  # -5 to -2
             terminal_reward = early_stop_penalty
             logger.warning(
                 f"Drawdown critique at step {self.current_step}/{self.episode_length} "
@@ -762,7 +774,7 @@ class TradingEnvironment(gym.Env):
         # 3. Balance = 0 (ruiné)
         if current_equity <= 0:
             done = True
-            terminal_reward = -20.0  # REDUCED from -100 to avoid overwhelming signal
+            terminal_reward = -5.0  # With reward_scale=10, becomes -50 total
             logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
 
         # Calculate terminal reward if done
