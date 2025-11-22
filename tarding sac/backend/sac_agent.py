@@ -72,7 +72,7 @@ class SACConfig:
     # Replay buffer
     buffer_capacity: int = 100000
     batch_size: int = 256  # REDUCED from 512 - better for early training and less overfitting
-    warmup_steps: int = 1000  # REDUCED from 10000 to 1000
+    warmup_steps: int = 5000  # INCREASED from 1000 - agent needs MORE exploration before learning
 
     # Adaptive batch sizing
     use_adaptive_batch: bool = True
