@@ -975,10 +975,12 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     # Stocker dans replay buffer
                     agent.replay_buffer.push(state, action, reward, next_state, done)
 
-                    # Update agent: faire plusieurs updates par step pour maximiser l'utilisation GPU
+                    # Update agent: REDUCED from 4 to 2 updates per step to prevent overfitting
                     if len(agent.replay_buffer) > batch_size:
-                        # Faire 4 updates consécutifs pour mieux utiliser le GPU
-                        for _ in range(4):
+                        # Faire 2 updates consécutifs (REDUCED from 4)
+                        # Reasoning: 4×512 = 2048 samples/step was too aggressive
+                        # Now: 2×256 = 512 samples/step (much better ratio)
+                        for _ in range(2):
                             losses = agent.update()
                             if losses:
                                 critic_loss_sum += losses.get('critic_loss', 0)
