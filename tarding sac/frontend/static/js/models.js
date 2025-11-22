@@ -30,7 +30,19 @@ let charts = {
     reward: null,
     sharpe: null,
     winrate: null,
-    returns: null
+    returns: null,
+    // Nouveaux graphiques
+    criticLoss: null,
+    actorLoss: null,
+    alphaLoss: null,
+    alphaValue: null,
+    actorLr: null,
+    criticLr: null,
+    actionMean: null,
+    actionStd: null,
+    bufferSize: null,
+    tradesCount: null,
+    finalEquity: null
 };
 
 // ============================================================================
@@ -700,30 +712,357 @@ function initCharts() {
             }
         }
     });
+
+    // ===== NOUVEAUX GRAPHIQUES DÉTAILLÉS =====
+
+    // Critic Loss
+    const ctxCriticLoss = document.getElementById('chart-critic-loss').getContext('2d');
+    charts.criticLoss = new Chart(ctxCriticLoss, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Critic Loss',
+                data: [],
+                borderColor: 'rgb(147, 51, 234)',
+                backgroundColor: 'rgba(147, 51, 234, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: { ...commonOptions }
+    });
+
+    // Actor Loss
+    const ctxActorLoss = document.getElementById('chart-actor-loss').getContext('2d');
+    charts.actorLoss = new Chart(ctxActorLoss, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Actor Loss',
+                data: [],
+                borderColor: 'rgb(16, 185, 129)',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: { ...commonOptions }
+    });
+
+    // Alpha Loss
+    const ctxAlphaLoss = document.getElementById('chart-alpha-loss').getContext('2d');
+    charts.alphaLoss = new Chart(ctxAlphaLoss, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Alpha Loss',
+                data: [],
+                borderColor: 'rgb(245, 158, 11)',
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: { ...commonOptions }
+    });
+
+    // Alpha Value
+    const ctxAlphaValue = document.getElementById('chart-alpha-value').getContext('2d');
+    charts.alphaValue = new Chart(ctxAlphaValue, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Alpha',
+                data: [],
+                borderColor: 'rgb(239, 68, 68)',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: { ...commonOptions }
+    });
+
+    // Actor Learning Rate
+    const ctxActorLr = document.getElementById('chart-actor-lr').getContext('2d');
+    charts.actorLr = new Chart(ctxActorLr, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Actor LR',
+                data: [],
+                borderColor: 'rgb(16, 185, 129)',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: {
+            ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                y: {
+                    ...commonOptions.scales.y,
+                    type: 'logarithmic'
+                }
+            }
+        }
+    });
+
+    // Critic Learning Rate
+    const ctxCriticLr = document.getElementById('chart-critic-lr').getContext('2d');
+    charts.criticLr = new Chart(ctxCriticLr, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Critic LR',
+                data: [],
+                borderColor: 'rgb(147, 51, 234)',
+                backgroundColor: 'rgba(147, 51, 234, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: {
+            ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                y: {
+                    ...commonOptions.scales.y,
+                    type: 'logarithmic'
+                }
+            }
+        }
+    });
+
+    // Action Mean
+    const ctxActionMean = document.getElementById('chart-action-mean').getContext('2d');
+    charts.actionMean = new Chart(ctxActionMean, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Action Mean',
+                data: [],
+                borderColor: 'rgb(59, 130, 246)',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: { ...commonOptions }
+    });
+
+    // Action Std
+    const ctxActionStd = document.getElementById('chart-action-std').getContext('2d');
+    charts.actionStd = new Chart(ctxActionStd, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Action Std',
+                data: [],
+                borderColor: 'rgb(245, 158, 11)',
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                tension: 0.1,
+                borderWidth: 2
+            }]
+        },
+        options: { ...commonOptions }
+    });
+
+    // Buffer Size
+    const ctxBufferSize = document.getElementById('chart-buffer-size').getContext('2d');
+    charts.bufferSize = new Chart(ctxBufferSize, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Buffer Size',
+                data: [],
+                borderColor: 'rgb(139, 92, 246)',
+                backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                tension: 0.1,
+                fill: true,
+                borderWidth: 2
+            }]
+        },
+        options: { ...commonOptions }
+    });
+
+    // Trades Count
+    const ctxTradesCount = document.getElementById('chart-trades-count').getContext('2d');
+    charts.tradesCount = new Chart(ctxTradesCount, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Total Trades',
+                    data: [],
+                    borderColor: 'rgb(59, 130, 246)',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    tension: 0.1,
+                    borderWidth: 2
+                },
+                {
+                    label: 'Winning',
+                    data: [],
+                    borderColor: 'rgb(16, 185, 129)',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    tension: 0.1,
+                    borderWidth: 2
+                },
+                {
+                    label: 'Losing',
+                    data: [],
+                    borderColor: 'rgb(239, 68, 68)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    tension: 0.1,
+                    borderWidth: 2
+                }
+            ]
+        },
+        options: {
+            ...commonOptions,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            }
+        }
+    });
+
+    // Final Equity
+    const ctxFinalEquity = document.getElementById('chart-final-equity').getContext('2d');
+    charts.finalEquity = new Chart(ctxFinalEquity, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Final Equity ($)',
+                data: [],
+                borderColor: 'rgb(30, 58, 138)',
+                backgroundColor: 'rgba(30, 58, 138, 0.2)',
+                tension: 0.1,
+                fill: true,
+                borderWidth: 3
+            }]
+        },
+        options: { ...commonOptions }
+    });
 }
 
 function updateCharts(metricsHistory) {
     if (!metricsHistory || !metricsHistory.episodes) return;
 
-    // Update Reward Chart
+    // Update Reward Chart (use episode_rewards instead of rewards)
     charts.reward.data.labels = metricsHistory.episodes;
-    charts.reward.data.datasets[0].data = metricsHistory.rewards;
+    charts.reward.data.datasets[0].data = metricsHistory.episode_rewards || metricsHistory.rewards || [];
     charts.reward.update('none'); // Update without animation for performance
 
     // Update Sharpe Chart
     charts.sharpe.data.labels = metricsHistory.episodes;
-    charts.sharpe.data.datasets[0].data = metricsHistory.sharpe_ratios;
+    charts.sharpe.data.datasets[0].data = metricsHistory.sharpe_ratios || [];
     charts.sharpe.update('none');
 
     // Update Win Rate Chart (convert to percentage)
     charts.winrate.data.labels = metricsHistory.episodes;
-    charts.winrate.data.datasets[0].data = metricsHistory.win_rates.map(wr => wr * 100);
+    charts.winrate.data.datasets[0].data = (metricsHistory.win_rates || []).map(wr => wr * 100);
     charts.winrate.update('none');
 
     // Update Returns Chart (convert to percentage)
     charts.returns.data.labels = metricsHistory.episodes;
-    charts.returns.data.datasets[0].data = metricsHistory.total_returns.map(r => r * 100);
+    charts.returns.data.datasets[0].data = (metricsHistory.total_returns || []).map(r => r * 100);
     charts.returns.update('none');
+
+    // ===== UPDATE NOUVEAUX GRAPHIQUES =====
+
+    // Update Critic Loss
+    if (metricsHistory.critic_losses) {
+        charts.criticLoss.data.labels = metricsHistory.episodes;
+        charts.criticLoss.data.datasets[0].data = metricsHistory.critic_losses;
+        charts.criticLoss.update('none');
+    }
+
+    // Update Actor Loss
+    if (metricsHistory.actor_losses) {
+        charts.actorLoss.data.labels = metricsHistory.episodes;
+        charts.actorLoss.data.datasets[0].data = metricsHistory.actor_losses;
+        charts.actorLoss.update('none');
+    }
+
+    // Update Alpha Loss
+    if (metricsHistory.alpha_losses) {
+        charts.alphaLoss.data.labels = metricsHistory.episodes;
+        charts.alphaLoss.data.datasets[0].data = metricsHistory.alpha_losses;
+        charts.alphaLoss.update('none');
+    }
+
+    // Update Alpha Value
+    if (metricsHistory.alpha_values) {
+        charts.alphaValue.data.labels = metricsHistory.episodes;
+        charts.alphaValue.data.datasets[0].data = metricsHistory.alpha_values;
+        charts.alphaValue.update('none');
+    }
+
+    // Update Actor LR
+    if (metricsHistory.actor_lr) {
+        charts.actorLr.data.labels = metricsHistory.episodes;
+        charts.actorLr.data.datasets[0].data = metricsHistory.actor_lr;
+        charts.actorLr.update('none');
+    }
+
+    // Update Critic LR
+    if (metricsHistory.critic_lr) {
+        charts.criticLr.data.labels = metricsHistory.episodes;
+        charts.criticLr.data.datasets[0].data = metricsHistory.critic_lr;
+        charts.criticLr.update('none');
+    }
+
+    // Update Action Mean
+    if (metricsHistory.action_mean) {
+        charts.actionMean.data.labels = metricsHistory.episodes;
+        charts.actionMean.data.datasets[0].data = metricsHistory.action_mean;
+        charts.actionMean.update('none');
+    }
+
+    // Update Action Std
+    if (metricsHistory.action_std) {
+        charts.actionStd.data.labels = metricsHistory.episodes;
+        charts.actionStd.data.datasets[0].data = metricsHistory.action_std;
+        charts.actionStd.update('none');
+    }
+
+    // Update Buffer Size
+    if (metricsHistory.buffer_sizes) {
+        charts.bufferSize.data.labels = metricsHistory.episodes;
+        charts.bufferSize.data.datasets[0].data = metricsHistory.buffer_sizes;
+        charts.bufferSize.update('none');
+    }
+
+    // Update Trades Count
+    if (metricsHistory.total_trades) {
+        charts.tradesCount.data.labels = metricsHistory.episodes;
+        charts.tradesCount.data.datasets[0].data = metricsHistory.total_trades;
+        charts.tradesCount.data.datasets[1].data = metricsHistory.winning_trades || [];
+        charts.tradesCount.data.datasets[2].data = metricsHistory.losing_trades || [];
+        charts.tradesCount.update('none');
+    }
+
+    // Update Final Equity
+    if (metricsHistory.final_equities) {
+        charts.finalEquity.data.labels = metricsHistory.episodes;
+        charts.finalEquity.data.datasets[0].data = metricsHistory.final_equities;
+        charts.finalEquity.update('none');
+    }
 }
 
 // ============================================================================

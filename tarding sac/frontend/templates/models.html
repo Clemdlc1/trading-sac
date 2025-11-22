@@ -266,7 +266,7 @@
                             <!-- Graphiques d'évolution -->
                             <div class="row mt-4">
                                 <div class="col-md-12">
-                                    <h6>Évolution des métriques</h6>
+                                    <h6>📊 Évolution des Métriques de Performance</h6>
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <div class="card">
@@ -293,6 +293,119 @@
                                     <div class="card">
                                         <div class="card-body p-2">
                                             <canvas id="chart-returns"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Nouveaux graphiques détaillés -->
+                            <div class="row mt-4">
+                                <div class="col-md-12">
+                                    <h6>📉 Métriques d'Entraînement (Losses & SAC)</h6>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Critic Loss</small>
+                                            <canvas id="chart-critic-loss"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Actor Loss</small>
+                                            <canvas id="chart-actor-loss"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Alpha Loss</small>
+                                            <canvas id="chart-alpha-loss"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
+                                <div class="col-md-12">
+                                    <h6>🔧 Paramètres SAC</h6>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Alpha (Temperature)</small>
+                                            <canvas id="chart-alpha-value"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Actor Learning Rate</small>
+                                            <canvas id="chart-actor-lr"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Critic Learning Rate</small>
+                                            <canvas id="chart-critic-lr"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
+                                <div class="col-md-12">
+                                    <h6>🎲 Exploration & Buffer</h6>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Action Mean</small>
+                                            <canvas id="chart-action-mean"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Action Std Dev</small>
+                                            <canvas id="chart-action-std"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Buffer Size</small>
+                                            <canvas id="chart-buffer-size"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
+                                <div class="col-md-12">
+                                    <h6>💰 Trades & Équité</h6>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Nombre de Trades</small>
+                                            <canvas id="chart-trades-count"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-body p-2">
+                                            <small class="text-muted">Équité Finale</small>
+                                            <canvas id="chart-final-equity"></canvas>
                                         </div>
                                     </div>
                                 </div>
