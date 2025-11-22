@@ -284,10 +284,10 @@ class RewardCalculator:
     ) -> float:
         """
         Calculate dense reward (per step).
-        
+
         Formula:
-        dense_reward = 0.30 × R_return + 0.30 × R_dsr + 0.20 × R_downside 
-                     + 0.15 × R_cost + 0.05 × R_position_change
+        dense_reward = 0.28 × R_return + 0.28 × R_dsr + 0.18 × R_downside
+                     + 0.14 × R_cost + 0.04 × R_position + 0.08 × R_survival
         
         Args:
             equity_t: Current equity
@@ -345,15 +345,21 @@ class RewardCalculator:
         else:
             R_position = -position_change * 0.0005  # REDUCED from 0.001
         
+        # Component 6: Survival bonus (small positive reward for each step)
+        # This ensures longer episodes get positive contribution
+        # Typical episode: 1000 steps × 0.001 = +1.0 bonus
+        R_survival = 0.001
+
         # Total dense reward
         dense_reward = (
-            0.30 * R_return +
-            0.30 * R_dsr +
-            0.20 * R_downside +
-            0.15 * R_cost +
-            0.05 * R_position
+            0.28 * R_return +
+            0.28 * R_dsr +
+            0.18 * R_downside +
+            0.14 * R_cost +
+            0.04 * R_position +
+            0.08 * R_survival  # NEW: 8% weight for survival
         )
-        
+
         return dense_reward
     
     def calculate_terminal_reward(
@@ -761,13 +767,23 @@ class TradingEnvironment(gym.Env):
         # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
         if current_dd >= 0.80:
             done = True
-            # ADJUSTED for reward_scale=10: -5 to -2 (will be scaled to -50 to -20)
-            progress_ratio = self.current_step / self.episode_length
-            early_stop_penalty = -5.0 + (3.0 * progress_ratio)  # -5 to -2
+            # FIXED: Penalty based on ACTUAL steps survived, not episode_length
+            # This ensures consistency across different episode lengths
+            # Early death (< 500 steps) = harsh penalty
+            # Late death (> 1500 steps) = lighter penalty
+            if self.current_step < 500:
+                early_stop_penalty = -5.0  # Died very early
+            elif self.current_step < 1000:
+                early_stop_penalty = -4.0  # Died early
+            elif self.current_step < 1500:
+                early_stop_penalty = -3.0  # Died mid-episode
+            else:
+                early_stop_penalty = -2.0  # At least survived a while
+
             terminal_reward = early_stop_penalty
             logger.warning(
-                f"Drawdown critique at step {self.current_step}/{self.episode_length} "
-                f"({progress_ratio:.1%} complete): DD={current_dd:.2%}, "
+                f"Drawdown critique at step {self.current_step} "
+                f"(planned: {self.episode_length}): DD={current_dd:.2%}, "
                 f"equity={current_equity:.2f}, penalty={early_stop_penalty:.2f}"
             )
 
@@ -779,11 +795,23 @@ class TradingEnvironment(gym.Env):
 
         # Calculate terminal reward if done
         if done and terminal_reward == 0.0:
+            # Episode completed normally (reached episode_length)
             terminal_reward = self.reward_calculator.calculate_terminal_reward(
                 self.returns_buffer,
                 self.equity_curve,
                 self.trades
             )
+
+            # BONUS: Reward for completing full episode without catastrophic failure
+            # Scaled by actual completion ratio
+            completion_ratio = self.current_step / self.episode_length
+            if completion_ratio >= 0.95:  # Completed at least 95% of episode
+                survival_bonus = 2.0  # Significant bonus for full completion
+                terminal_reward += survival_bonus
+                logger.info(
+                    f"Episode completed successfully! Steps: {self.current_step}/"
+                    f"{self.episode_length}, bonus: +{survival_bonus:.2f}"
+                )
 
         # Combine rewards
         total_reward = (
