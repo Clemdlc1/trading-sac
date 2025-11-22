@@ -677,8 +677,13 @@ class TradingEnvironment(gym.Env):
         
         # Execute position change
         position_change = abs(target_position - self.position)
-        
-        if position_change > 1e-6:
+
+        # CRITICAL FIX: Require minimum meaningful position change to count as trade
+        # This prevents micro-adjustments from stochastic policy counting as trades
+        # Threshold: 10% of typical position size (≈0.02 lots for 100k account)
+        MIN_POSITION_CHANGE = 0.02  # Minimum lots to trigger a trade
+
+        if position_change > MIN_POSITION_CHANGE:
             # Calculate transaction cost
             cost = self.cost_model.cost_in_dollars(
                 position_change,
