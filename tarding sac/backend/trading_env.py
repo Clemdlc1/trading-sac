@@ -68,11 +68,14 @@ class TradingEnvConfig:
     episode_probs: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.2])
     
     # Reward function parameters
-    dense_weight: float = 0.40
-    terminal_weight: float = 0.60
-    
+    dense_weight: float = 0.70  # INCREASED from 0.40 - more immediate feedback
+    terminal_weight: float = 0.30  # DECREASED from 0.60 - less delayed signal
+
+    # Reward scaling to improve learning signal
+    reward_scale: float = 10.0  # Scale up rewards for better gradients
+
     # DSR parameters (Differential Sharpe Ratio)
-    dsr_eta: float = 0.001
+    dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation
     
     # Observation space
     n_features: int = 30
@@ -302,39 +305,45 @@ class RewardCalculator:
         r_t = (equity_t - equity_t_minus_1) / initial_capital
         R_return = r_t
         
-        # Component 2: Differential Sharpe Ratio (30%)
+        # Component 2: Simplified Sharpe-like component (30%)
+        # Simplified from DSR to avoid numerical instabilities
         eta = self.config.dsr_eta
         self.A = (1 - eta) * self.A + eta * r_t
         self.B = (1 - eta) * self.B + eta * (r_t ** 2)
-        
-        delta_A = r_t - self.A
-        delta_B = (r_t ** 2) - self.B
-        
-        numerator = self.B * delta_A - 0.5 * self.A * delta_B
-        denominator = (self.B - self.A ** 2) ** 1.5 + 1e-8
-        
-        R_dsr = np.clip(numerator / denominator, -3.0, 3.0)
+
+        # Simplified Sharpe: excess return / volatility
+        mean_return = self.A
+        variance = max(self.B - self.A ** 2, 1e-8)  # Prevent negative variance
+        std = np.sqrt(variance)
+
+        # Sharpe-like reward: reward excess returns relative to volatility
+        if std > 1e-6:
+            R_dsr = mean_return / (std + 1e-6)
+        else:
+            R_dsr = 0.0
+
+        # Gentler clipping to preserve signal strength
+        R_dsr = np.clip(R_dsr, -5.0, 5.0)
         
         # Component 3: Downside Penalty (20%)
         recent_returns = returns_buffer[-50:] if len(returns_buffer) >= 50 else returns_buffer
         negative_returns = [r for r in recent_returns if r < 0]
-        
+
         if len(negative_returns) > 0:
-            R_downside = -np.std(negative_returns) * 10.0
+            R_downside = -np.std(negative_returns) * 3.0  # REDUCED from 10.0 to 3.0
         else:
             R_downside = 0.0
         
         # Component 4: Transaction Costs (15%)
-        if position_change > 0.01 * equity_t_minus_1:
-            R_cost = -transaction_cost / initial_capital
-        else:
-            R_cost = 0.0
+        # Always penalize costs proportionally (removed threshold to simplify)
+        R_cost = -transaction_cost / initial_capital
         
         # Component 5: Position Change Penalty (5%)
-        if n_trades_today > 10:
-            R_position = -(n_trades_today - 10) ** 2 * 0.0005
+        # Gentler penalty - encourage some trading
+        if n_trades_today > 20:  # INCREASED threshold from 10 to 20
+            R_position = -(n_trades_today - 20) ** 2 * 0.0002  # REDUCED coefficient
         else:
-            R_position = -position_change * 0.001
+            R_position = -position_change * 0.0005  # REDUCED from 0.001
         
         # Total dense reward
         dense_reward = (
@@ -403,11 +412,11 @@ class RewardCalculator:
             R_drawdown = -0.15 * (max_dd ** 2)  # Quadratic penalty
         
         # Component 4: Expectancy (15%)
-        if len(trades) > 10:
+        if len(trades) > 5:  # REDUCED from 10 to 5 to encourage initial exploration
             trade_pnls = [t['pnl'] for t in trades]
             winning = [p for p in trade_pnls if p > 0]
             losing = [p for p in trade_pnls if p < 0]
-            
+
             if len(winning) > 0 and len(losing) > 0:
                 win_rate = len(winning) / len(trades)
                 avg_win = np.mean(winning)
@@ -415,9 +424,9 @@ class RewardCalculator:
                 expectancy = win_rate * avg_win - (1 - win_rate) * avg_loss
                 R_expectancy = (expectancy - 20) / 10
             else:
-                R_expectancy = -0.5
+                R_expectancy = -0.2  # REDUCED from -0.5
         else:
-            R_expectancy = -1.0  # Penalty for < 10 trades
+            R_expectancy = -0.3  # REDUCED from -1.0 to encourage exploration
         
         # Total terminal reward
         terminal_reward = (
@@ -740,11 +749,9 @@ class TradingEnvironment(gym.Env):
         # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
         if current_dd >= 0.80:
             done = True
-            # Malus proportionnel à la précocité de l'arrêt (×10 pour signal très fort)
-            # Plus l'épisode se termine tôt, plus le malus est élevé
+            # REDUCED penalty from -100/-10 to -20/-5 to avoid dominating learning signal
             progress_ratio = self.current_step / self.episode_length
-            # Malus entre -100.0 (arrêt immédiat) et -50.0 (arrêt tardif)
-            early_stop_penalty = -100.0 + (90.0 * progress_ratio)
+            early_stop_penalty = -20.0 + (15.0 * progress_ratio)  # -20 to -5
             terminal_reward = early_stop_penalty
             logger.warning(
                 f"Drawdown critique at step {self.current_step}/{self.episode_length} "
@@ -755,7 +762,7 @@ class TradingEnvironment(gym.Env):
         # 3. Balance = 0 (ruiné)
         if current_equity <= 0:
             done = True
-            terminal_reward = -100.0  # Severe penalty (augmenté pour cohérence)
+            terminal_reward = -20.0  # REDUCED from -100 to avoid overwhelming signal
             logger.warning(f"Balance épuisée at step {self.current_step}: equity={current_equity:.2f}")
 
         # Calculate terminal reward if done
@@ -771,6 +778,9 @@ class TradingEnvironment(gym.Env):
             self.config.dense_weight * dense_reward +
             self.config.terminal_weight * terminal_reward
         )
+
+        # Scale reward to improve learning signal (gradients)
+        total_reward *= self.config.reward_scale
 
         # Next step
         self.current_step += 1
