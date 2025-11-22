@@ -729,6 +729,40 @@ def get_equity_curve():
         'equity': system_state.equity_history
     })
 
+@app.route('/api/training/metrics', methods=['GET'])
+def get_training_metrics():
+    """Obtenir l'historique complet des métriques d'entraînement"""
+    try:
+        metrics_file = Path('logs/training_metrics.json')
+
+        if not metrics_file.exists():
+            return jsonify({
+                'success': False,
+                'error': 'Aucune métrique d\'entraînement trouvée'
+            }), 404
+
+        with open(metrics_file, 'r') as f:
+            metrics = json.load(f)
+
+        # Statistiques sur les métriques
+        num_episodes = len(metrics.get('episodes', []))
+
+        return jsonify({
+            'success': True,
+            'num_episodes': num_episodes,
+            'metrics': metrics,
+            'available_metrics': list(metrics.keys()),
+            'file_path': str(metrics_file),
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Erreur récupération métriques: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/api/validation/run', methods=['POST'])
 def run_validation():
     """Exécuter une validation walk-forward"""
@@ -896,15 +930,78 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
         logger.info(f"Agents créés: {len(agents)}")
 
-        # Historique des métriques pour les graphiques
-        metrics_history = {
-            'episodes': [],
-            'rewards': [],
-            'sharpe_ratios': [],
-            'win_rates': [],
-            'max_drawdowns': [],
-            'total_returns': []
-        }
+        # Historique des métriques pour les graphiques (SANS LIMITE - tout l'historique)
+        # Charger l'historique existant s'il existe
+        metrics_file = Path('logs/training_metrics.json')
+        if metrics_file.exists() and not from_checkpoint:
+            try:
+                with open(metrics_file, 'r') as f:
+                    metrics_history = json.load(f)
+                logger.info(f"Métriques chargées: {len(metrics_history.get('episodes', []))} épisodes précédents")
+            except:
+                metrics_history = initialize_metrics_history()
+        else:
+            metrics_history = initialize_metrics_history()
+
+        def initialize_metrics_history():
+            """Initialise toutes les métriques à tracker (style TensorBoard)"""
+            return {
+                # Episode info
+                'episodes': [],
+                'timestamps': [],
+
+                # Rewards
+                'episode_rewards': [],
+                'episode_rewards_mean': [],  # Moving average
+                'episode_rewards_std': [],
+
+                # Performance metrics
+                'sharpe_ratios': [],
+                'sortino_ratios': [],
+                'win_rates': [],
+                'max_drawdowns': [],
+                'total_returns': [],
+                'final_equities': [],
+                'profit_factors': [],
+                'total_trades': [],
+                'winning_trades': [],
+                'losing_trades': [],
+
+                # Losses
+                'critic_losses': [],
+                'actor_losses': [],
+                'alpha_losses': [],
+
+                # SAC specific
+                'alpha_values': [],
+                'target_entropies': [],
+
+                # Learning rates
+                'actor_lr': [],
+                'critic_lr': [],
+
+                # Buffer stats
+                'buffer_sizes': [],
+                'buffer_winning_ratio': [],
+                'buffer_losing_ratio': [],
+                'buffer_neutral_ratio': [],
+
+                # Exploration stats
+                'action_mean': [],
+                'action_std': [],
+
+                # Step info
+                'episode_steps': [],
+                'total_steps': [],
+
+                # Gradient stats (si disponible)
+                'actor_grad_norm': [],
+                'critic_grad_norm': [],
+            }
+
+        # Réinitialiser si besoin
+        if not metrics_file.exists() or not from_checkpoint:
+            metrics_history = initialize_metrics_history()
 
         # Logger pour les transitions (pour CSV)
         transitions_log = []
@@ -935,7 +1032,11 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 # Utiliser moyenne courante au lieu d'accumuler toutes les pertes (économie mémoire)
                 critic_loss_sum = 0.0
                 actor_loss_sum = 0.0
+                alpha_loss_sum = 0.0
                 update_count = 0
+
+                # Tracking pour actions (exploration)
+                episode_actions = []
 
                 # Capturer la date de début d'épisode
                 episode_start_time = datetime.now()
@@ -946,6 +1047,10 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
                     # Sélectionner action
                     action = agent.select_action(state, deterministic=False)
+
+                    # Tracker l'action pour statistiques
+                    action_value = float(action[0]) if hasattr(action, '__len__') else float(action)
+                    episode_actions.append(action_value)
 
                     # Step environment
                     next_state, reward, done, info = env.step(action)
@@ -985,6 +1090,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                             if losses:
                                 critic_loss_sum += losses.get('critic_loss', 0)
                                 actor_loss_sum += losses.get('actor_loss', 0)
+                                alpha_loss_sum += losses.get('alpha_loss', 0)
                                 update_count += 1
 
                     episode_reward += reward
@@ -1009,6 +1115,25 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 # Calculer métriques de l'épisode
                 env_metrics = env.get_episode_metrics()
 
+                # Calculer statistiques des actions
+                action_mean = float(np.mean(episode_actions)) if episode_actions else 0.0
+                action_std = float(np.std(episode_actions)) if episode_actions else 0.0
+
+                # Calculer moving average des rewards (100 derniers épisodes)
+                recent_rewards = metrics_history['episode_rewards'][-99:] + [episode_reward]
+                reward_mean = float(np.mean(recent_rewards))
+                reward_std = float(np.std(recent_rewards))
+
+                # Récupérer les stats du buffer
+                buffer_size = len(agent.replay_buffer)
+                buffer_winning = len(agent.replay_buffer.winning_indices) / buffer_size if buffer_size > 0 else 0
+                buffer_losing = len(agent.replay_buffer.losing_indices) / buffer_size if buffer_size > 0 else 0
+                buffer_neutral = len(agent.replay_buffer.neutral_indices) / buffer_size if buffer_size > 0 else 0
+
+                # Récupérer les learning rates actuels
+                actor_lr = float(agent.actor_optimizer.param_groups[0]['lr'])
+                critic_lr = float(agent.critic_optimizer.param_groups[0]['lr'])
+
                 # Mettre à jour l'état du training
                 current_agent_id = agent_indices[agent_idx] if agent_id is None else agent_id
                 system_state.training_state['current_episode'] = episode + 1
@@ -1018,6 +1143,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'episode_steps': episode_steps,
                     'avg_critic_loss': float(critic_loss_sum / update_count) if update_count > 0 else 0,
                     'avg_actor_loss': float(actor_loss_sum / update_count) if update_count > 0 else 0,
+                    'avg_alpha_loss': float(alpha_loss_sum / update_count) if update_count > 0 else 0,
                     'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
                     'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
                     'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
@@ -1026,44 +1152,111 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'total_return': float(env_metrics.get('total_return', 0))
                 }
 
-                # Ajouter à l'historique (convertir tous les types NumPy en types Python natifs)
+                # Ajouter TOUTES les métriques à l'historique (SANS LIMITE - stockage complet)
                 metrics_history['episodes'].append(int(episode + 1))
-                metrics_history['rewards'].append(float(episode_reward))
+                metrics_history['timestamps'].append(datetime.now().isoformat())
+
+                # Rewards
+                metrics_history['episode_rewards'].append(float(episode_reward))
+                metrics_history['episode_rewards_mean'].append(reward_mean)
+                metrics_history['episode_rewards_std'].append(reward_std)
+
+                # Performance metrics
                 metrics_history['sharpe_ratios'].append(float(env_metrics.get('sharpe_ratio', 0)))
+                metrics_history['sortino_ratios'].append(float(env_metrics.get('sortino_ratio', 0)))
                 metrics_history['win_rates'].append(float(env_metrics.get('win_rate', 0)))
                 metrics_history['max_drawdowns'].append(float(env_metrics.get('max_drawdown', 0)))
                 metrics_history['total_returns'].append(float(env_metrics.get('total_return', 0)))
+                metrics_history['final_equities'].append(float(env_metrics.get('final_equity', 0)))
+                metrics_history['profit_factors'].append(float(env_metrics.get('profit_factor', 0)))
+                metrics_history['total_trades'].append(int(env_metrics.get('total_trades', 0)))
+                metrics_history['winning_trades'].append(int(env_metrics.get('winning_trades', 0)))
+                metrics_history['losing_trades'].append(int(env_metrics.get('losing_trades', 0)))
 
-                # Limiter l'historique stocké aux 200 derniers épisodes
-                if len(metrics_history['episodes']) > 200:
-                    for key in metrics_history.keys():
-                        metrics_history[key] = metrics_history[key][-200:]
+                # Losses
+                metrics_history['critic_losses'].append(float(critic_loss_sum / update_count) if update_count > 0 else 0)
+                metrics_history['actor_losses'].append(float(actor_loss_sum / update_count) if update_count > 0 else 0)
+                metrics_history['alpha_losses'].append(float(alpha_loss_sum / update_count) if update_count > 0 else 0)
 
-                # Sauvegarder l'état seulement tous les 10 épisodes (optimisation performance)
+                # SAC specific
+                metrics_history['alpha_values'].append(float(agent.alpha.item()))
+                metrics_history['target_entropies'].append(float(agent.target_entropy) if hasattr(agent, 'target_entropy') else 0)
+
+                # Learning rates
+                metrics_history['actor_lr'].append(actor_lr)
+                metrics_history['critic_lr'].append(critic_lr)
+
+                # Buffer stats
+                metrics_history['buffer_sizes'].append(buffer_size)
+                metrics_history['buffer_winning_ratio'].append(float(buffer_winning))
+                metrics_history['buffer_losing_ratio'].append(float(buffer_losing))
+                metrics_history['buffer_neutral_ratio'].append(float(buffer_neutral))
+
+                # Exploration stats
+                metrics_history['action_mean'].append(action_mean)
+                metrics_history['action_std'].append(action_std)
+
+                # Step info
+                metrics_history['episode_steps'].append(episode_steps)
+                metrics_history['total_steps'].append(int(agent.total_steps))
+
+                # PAS DE LIMITATION - On garde tout l'historique depuis l'épisode 0
+
+                # Sauvegarder l'état ET les métriques tous les 10 épisodes (optimisation performance)
                 if episode % 10 == 0:
                     system_state.save_training_state()
 
-                # Limiter l'historique envoyé aux derniers 100 épisodes pour la performance
-                # Convertir en types Python natifs pour la sérialisation JSON
-                history_to_send = {
-                    'episodes': [int(x) for x in metrics_history['episodes'][-100:]],
-                    'rewards': [float(x) for x in metrics_history['rewards'][-100:]],
-                    'sharpe_ratios': [float(x) for x in metrics_history['sharpe_ratios'][-100:]],
-                    'win_rates': [float(x) for x in metrics_history['win_rates'][-100:]],
-                    'max_drawdowns': [float(x) for x in metrics_history['max_drawdowns'][-100:]],
-                    'total_returns': [float(x) for x in metrics_history['total_returns'][-100:]]
-                }
+                    # Sauvegarder l'historique complet des métriques dans un fichier JSON
+                    try:
+                        with open(metrics_file, 'w') as f:
+                            json.dump(metrics_history, f, indent=2)
+                        logger.info(f"Métriques sauvegardées: {len(metrics_history['episodes'])} épisodes")
+                    except Exception as e:
+                        logger.error(f"Erreur sauvegarde métriques: {e}")
 
-                # Émettre progression à chaque épisode
+                # Envoyer TOUT l'historique au frontend (pas de limitation)
+                # Le frontend peut gérer l'affichage (zoom, pan, etc.)
+                history_to_send = metrics_history
+
+                # Émettre progression à chaque épisode avec TOUTES les métriques
                 socketio.emit('training_progress', {
+                    # Episode info
                     'episode': int(episode + 1),
                     'total_episodes': int(num_episodes),
                     'agent': int(current_agent_id),
-                    'reward': float(episode_reward),
                     'steps': int(episode_steps),
-                    'episode_length': int(env.episode_length),  # Pour la barre de progression d'épisode
+                    'total_steps': int(agent.total_steps),
+                    'episode_length': int(env.episode_length),
+
+                    # Current episode metrics
+                    'reward': float(episode_reward),
+                    'reward_mean': reward_mean,
+                    'reward_std': reward_std,
+
+                    # Losses
                     'critic_loss': float(critic_loss_sum / update_count) if update_count > 0 else 0.0,
                     'actor_loss': float(actor_loss_sum / update_count) if update_count > 0 else 0.0,
+                    'alpha_loss': float(alpha_loss_sum / update_count) if update_count > 0 else 0.0,
+
+                    # SAC specific
+                    'alpha': float(agent.alpha.item()),
+                    'target_entropy': float(agent.target_entropy) if hasattr(agent, 'target_entropy') else 0,
+
+                    # Learning rates
+                    'actor_lr': actor_lr,
+                    'critic_lr': critic_lr,
+
+                    # Buffer stats
+                    'buffer_size': buffer_size,
+                    'buffer_winning_ratio': float(buffer_winning),
+                    'buffer_losing_ratio': float(buffer_losing),
+                    'buffer_neutral_ratio': float(buffer_neutral),
+
+                    # Exploration
+                    'action_mean': action_mean,
+                    'action_std': action_std,
+
+                    # Performance metrics
                     'sharpe_ratio': float(env_metrics.get('sharpe_ratio', 0)),
                     'sortino_ratio': float(env_metrics.get('sortino_ratio', 0)),
                     'max_drawdown': float(env_metrics.get('max_drawdown', 0)),
@@ -1072,9 +1265,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'total_return': float(env_metrics.get('total_return', 0)),
                     'total_trades': int(env_metrics.get('total_trades', 0)),
                     'winning_trades': int(env_metrics.get('winning_trades', 0)),
+                    'losing_trades': int(env_metrics.get('losing_trades', 0)),
                     'final_equity': float(env_metrics.get('final_equity', 0)),
+
+                    # Timestamp
                     'timestamp': datetime.now().isoformat(),
-                    'metrics_history': history_to_send  # Envoyer seulement les derniers 100 épisodes
+
+                    # TOUT l'historique des métriques (depuis l'épisode 0)
+                    'metrics_history': history_to_send
                 })
 
             # Sauvegarder checkpoint tous les 100 épisodes
@@ -1105,9 +1303,20 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
         system_state.training_state['is_training'] = False
         system_state.save_training_state()
 
+        # Sauvegarde FINALE de toutes les métriques
+        try:
+            with open(metrics_file, 'w') as f:
+                json.dump(metrics_history, f, indent=2)
+            logger.info(f"✅ Métriques finales sauvegardées: {len(metrics_history['episodes'])} épisodes au total")
+            logger.info(f"   Fichier: {metrics_file}")
+        except Exception as e:
+            logger.error(f"Erreur sauvegarde métriques finales: {e}")
+
         socketio.emit('training_complete', {
             'message': 'Entraînement terminé avec succès',
             'agent_id': agent_id if agent_id is not None else 'all',
+            'total_episodes': len(metrics_history['episodes']),
+            'metrics_file': str(metrics_file),
             'timestamp': datetime.now().isoformat()
         })
 
