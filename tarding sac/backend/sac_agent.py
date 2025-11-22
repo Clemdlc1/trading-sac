@@ -63,24 +63,35 @@ class SACConfig:
     alpha_lr: float = 3e-4
     gamma: float = 0.95
     tau: float = 0.005
-    
+
+    # Learning rate scheduling
+    use_lr_scheduler: bool = True
+    lr_decay_factor: float = 0.995  # Decay LR by this factor every 1000 steps
+    min_lr: float = 1e-5  # Minimum learning rate
+
     # Replay buffer
     buffer_capacity: int = 100000
     batch_size: int = 512
-    warmup_steps: int = 10000
-    
+    warmup_steps: int = 1000  # REDUCED from 10000 to 1000
+
     # Regularization
     weight_decay: float = 1e-3
-    actor_dropout: float = 0.1
-    critic_dropout: float = 0.2
-    
+    actor_dropout: float = 0.05  # REDUCED from 0.1 to 0.05
+    critic_dropout: float = 0.1  # REDUCED from 0.2 to 0.1
+
     # Entropy tuning
     auto_entropy_tuning: bool = True
     target_entropy: float = -1.0  # -dim(action)
-    
+    use_adaptive_entropy: bool = True  # Gradually reduce target entropy over training
+    entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
+
     # Training
     update_ratio: float = 1.0  # 1 gradient update per env step
-    max_grad_norm: float = 1.0
+    max_grad_norm: float = 2.0  # INCREASED from 1.0 to 2.0
+
+    # Progressive training
+    use_curriculum: bool = True
+    curriculum_threshold: int = 50  # Episodes before increasing difficulty
     
     # Adaptive Normalization (AN-SAC)
     use_adaptive_norm: bool = True
@@ -636,7 +647,7 @@ class SACAgent:
             self.actor.parameters(),
             lr=self.config.actor_lr
         )
-        
+
         if self.config.use_regime_qfuncs:
             self.critic_optimizer = optim.Adam(
                 list(self.critic1_low.parameters()) +
@@ -652,10 +663,25 @@ class SACAgent:
                 lr=self.config.critic_lr,
                 weight_decay=self.config.weight_decay
             )
-        
+
+        # Learning rate schedulers
+        if self.config.use_lr_scheduler:
+            self.actor_scheduler = optim.lr_scheduler.ExponentialLR(
+                self.actor_optimizer,
+                gamma=self.config.lr_decay_factor
+            )
+            self.critic_scheduler = optim.lr_scheduler.ExponentialLR(
+                self.critic_optimizer,
+                gamma=self.config.lr_decay_factor
+            )
+        else:
+            self.actor_scheduler = None
+            self.critic_scheduler = None
+
         # Automatic entropy tuning
         if self.config.auto_entropy_tuning:
             self.target_entropy = self.config.target_entropy
+            self.initial_target_entropy = self.config.target_entropy  # Store initial value
             self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
             self.alpha_optimizer = optim.Adam([self.log_alpha], lr=self.config.alpha_lr)
             self.alpha = self.log_alpha.exp()
@@ -812,6 +838,32 @@ class SACAgent:
         # Update scaler once at the end (for mixed precision)
         if self.use_amp:
             self.scaler.update()
+
+        # Adaptive entropy scheduling: gradually reduce target entropy to encourage exploitation
+        if self.config.use_adaptive_entropy and self.config.auto_entropy_tuning:
+            progress = min(1.0, self.total_steps / self.config.entropy_decay_steps)
+            # Start at -1.0, decay to -0.5 (less exploration over time)
+            self.target_entropy = self.initial_target_entropy * (1.0 - 0.5 * progress)
+
+        # Step learning rate schedulers every 1000 steps
+        if self.config.use_lr_scheduler and self.total_steps % 1000 == 0 and self.total_steps > 0:
+            # Get current LRs before stepping
+            current_actor_lr = self.actor_optimizer.param_groups[0]['lr']
+            current_critic_lr = self.critic_optimizer.param_groups[0]['lr']
+
+            # Only decay if above minimum LR
+            if current_actor_lr > self.config.min_lr:
+                self.actor_scheduler.step()
+            if current_critic_lr > self.config.min_lr:
+                self.critic_scheduler.step()
+
+            # Log LR changes every 5000 steps
+            if self.total_steps % 5000 == 0:
+                logger.info(
+                    f"Learning rates at step {self.total_steps}: "
+                    f"Actor={self.actor_optimizer.param_groups[0]['lr']:.6f}, "
+                    f"Critic={self.critic_optimizer.param_groups[0]['lr']:.6f}"
+                )
 
         return {
             'critic_loss': critic_loss,
