@@ -66,6 +66,9 @@ class TradingEnvConfig:
     # Episode parameters - FIXED LENGTH for consistent rewards
     episode_lengths: List[int] = field(default_factory=lambda: [3000])  # FIXED to 3000 only
     episode_probs: List[float] = field(default_factory=lambda: [1.0])  # 100% probability
+
+    # Learning phases
+    no_trading_warmup_steps: int = 20000  # First 20k steps: ZERO trading, pure survival learning!
     
     # Reward function parameters
     dense_weight: float = 0.70  # INCREASED from 0.40 - more immediate feedback
@@ -365,7 +368,7 @@ class RewardCalculator:
         # - 450 steps: 450 × (-0.5) × 0.50 × 0.70 × 10 = -787.5 (trading) + 1575 (survival) = +787.5 total
         #
         # Result: 450 steps is MUCH BETTER than 200 steps! ✅
-        R_survival = 1.0  # ULTRA HIGH! (1000× increase from 0.001)
+        R_survival = 10.0  # EXTREME! (10,000× from 0.001) - Must dominate bad trading!
 
         # Total dense reward - 50/50 split between trading performance and survival
         dense_reward = (
@@ -565,6 +568,7 @@ class TradingEnvironment(gym.Env):
         # Curriculum learning parameters
         self.curriculum_stage = 0  # 0=short, 1=medium, 2=long episodes
         self.episodes_completed = 0
+        self.global_step_count = 0  # Total steps across ALL episodes (for warmup tracking)
 
         logger.info(f"Trading Environment initialized with {self.total_steps} steps")
     
@@ -635,6 +639,12 @@ class TradingEnvironment(gym.Env):
         # Convert action to scalar
         action = float(action[0])
         action = np.clip(action, self.config.action_min, self.config.action_max)
+
+        # PURE SURVIVAL WARMUP: Force no trading for first N steps
+        if self.global_step_count < self.config.no_trading_warmup_steps:
+            action = 0.0  # Force neutral position (no trading)
+        elif self.global_step_count == self.config.no_trading_warmup_steps:
+            logger.info(f"🎯 WARMUP COMPLETE! Trading enabled after {self.global_step_count} steps of pure survival training")
         
         # Get current state
         idx = self.episode_start + self.current_step
@@ -756,8 +766,8 @@ class TradingEnvironment(gym.Env):
         if self.current_step >= self.episode_length - 1:
             done = True
 
-        # 2. Drawdown >= 80% (protection contre les pertes catastrophiques)
-        if current_dd >= 0.80:
+        # 2. Drawdown >= 95% (VERY LENIENT - allow more learning time)
+        if current_dd >= 0.95:
             done = True
             # FIXED: Penalty based on ACTUAL steps survived, not episode_length
             # This ensures consistency across different episode lengths
@@ -816,6 +826,7 @@ class TradingEnvironment(gym.Env):
 
         # Next step
         self.current_step += 1
+        self.global_step_count += 1  # Track total steps across all episodes
 
         # Get next observation
         obs = self._get_observation()
