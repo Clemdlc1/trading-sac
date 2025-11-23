@@ -587,6 +587,7 @@ class TradingEnvironment(gym.Env):
         self.peak_equity = self.config.initial_capital
         self.total_trades = 0
         self.winning_trades = 0
+        self.losing_trades = 0
 
         # Curriculum learning parameters
         self.curriculum_stage = 0  # 0=short, 1=medium, 2=long episodes
@@ -643,7 +644,8 @@ class TradingEnvironment(gym.Env):
         self.peak_equity = self.equity
         self.total_trades = 0
         self.winning_trades = 0
-        
+        self.losing_trades = 0
+
         # Get initial observation
         obs = self._get_observation()
         
@@ -943,10 +945,12 @@ class TradingEnvironment(gym.Env):
         # Update equity
         self.equity += net_pnl
         
-        # Track winning trades
+        # Track winning and losing trades
         if net_pnl > 0:
             self.winning_trades += 1
-        
+        elif net_pnl < 0:
+            self.losing_trades += 1
+
         return net_pnl
     
     def get_episode_metrics(self) -> Dict:
@@ -1006,6 +1010,7 @@ class TradingEnvironment(gym.Env):
             'max_drawdown': max_dd,
             'total_trades': self.total_trades,
             'winning_trades': self.winning_trades,
+            'losing_trades': self.losing_trades,
             'win_rate': win_rate,
             'profit_factor': profit_factor,
             'avg_position': np.mean(np.abs(self.position_history)) if self.position_history else 0.0
