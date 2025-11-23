@@ -71,7 +71,7 @@ class SACConfig:
 
     # Replay buffer
     buffer_capacity: int = 100000
-    batch_size: int = 256  # REDUCED from 512 - better for early training and less overfitting
+    batch_size: int = 1024 
     warmup_steps: int = 5000  # INCREASED from 1000 - agent needs MORE exploration before learning
 
     # Adaptive batch sizing
@@ -86,8 +86,8 @@ class SACConfig:
 
     # Entropy tuning
     auto_entropy_tuning: bool = True
-    target_entropy: float = -1.0  # -dim(action)
-    use_adaptive_entropy: bool = True  # Gradually reduce target entropy over training
+    target_entropy: float = 0.3  # -dim(action)
+    use_adaptive_entropy: bool = False  # Gradually reduce target entropy over training
     entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
 
     # Training
@@ -99,7 +99,7 @@ class SACConfig:
     curriculum_threshold: int = 50  # Episodes before increasing difficulty
     
     # Adaptive Normalization (AN-SAC)
-    use_adaptive_norm: bool = True
+    use_adaptive_norm: bool = False
     reward_scale: float = 1.0
     
     # HMM support (for Agent 3)

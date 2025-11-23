@@ -628,12 +628,6 @@ class TradingEnvironment(gym.Env):
         # Convert action to scalar
         action = float(action[0])
         action = np.clip(action, self.config.action_min, self.config.action_max)
-
-        # PURE SURVIVAL WARMUP: Force no trading for first N steps
-        if self.global_step_count < self.config.no_trading_warmup_steps:
-            action = 0.0  # Force neutral position (no trading)
-        elif self.global_step_count == self.config.no_trading_warmup_steps:
-            logger.info(f"🎯 WARMUP COMPLETE! Trading enabled after {self.global_step_count} steps of pure survival training")
         
         # Get current state
         idx = self.episode_start + self.current_step
