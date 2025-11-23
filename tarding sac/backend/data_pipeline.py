@@ -591,50 +591,35 @@ class DataAggregator:
     def aggregate_to_5min(df: pd.DataFrame) -> pd.DataFrame:
         """
         Aggregate 1-minute OHLC data to 5-minute bars.
-        
-        According to spec:
-        - Open: first close value in 5-min window
-        - High: max of all highs
-        - Low: min of all lows
-        - Close: last close value in 5-min window
-        
+
+        Standard OHLC aggregation (simplifié):
+        - Open: première valeur open dans fenêtre 5min
+        - High: max de tous les highs
+        - Low: min de tous les lows
+        - Close: dernière valeur close dans fenêtre 5min
+
         Args:
             df: DataFrame with 1-minute OHLC data
-            
+
         Returns:
             DataFrame with 5-minute OHLC data
         """
         df = df.copy()
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df = df.set_index('timestamp')
-        
-        # Resample to 5-minute bars
+
+        # Agrégation standard OHLC (simple et correcte)
         aggregated = df.resample('5min').agg({
-            'open': 'first',    # First close becomes open (as per spec)
-            'high': 'max',      # Max of all highs
-            'low': 'min',       # Min of all lows
-            'close': 'last'     # Last close
+            'open': 'first',   # Première valeur open
+            'high': 'max',     # Max de tous les highs
+            'low': 'min',      # Min de tous les lows
+            'close': 'last'    # Dernière valeur close
         })
-        
-        # Actually, the spec says "Open: première valeur close dans fenêtre 5min"
-        # This means open should be the first CLOSE, not the first open
-        # Let me correct this:
-        aggregated_corrected = df.resample('5min').agg({
-            'close': ['first', 'last'],
-            'high': 'max',
-            'low': 'min'
-        })
-        
-        # Flatten multi-index columns
-        aggregated_corrected.columns = ['open', 'close', 'high', 'low']
-        
-        # Reorder columns to standard OHLC
-        aggregated_corrected = aggregated_corrected[['open', 'high', 'low', 'close']]
-        
+
         # Remove bars with NaN values
-        aggregated_corrected = aggregated_corrected.dropna()
-        
-        return aggregated_corrected.reset_index()
+        aggregated = aggregated.dropna()
+
+        return aggregated.reset_index()
 
 
 class DataCleaner:

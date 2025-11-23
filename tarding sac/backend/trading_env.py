@@ -49,15 +49,16 @@ class TradingEnvConfig:
     risk_per_trade: float = 0.0005  # 0.05% per trade (4× safer than before!)
     max_leverage: float = 2.0  # 2× maximum - extremely safe
     min_position_size: float = 0.01  # Minimum lot size
-    
-    # Stop-Loss and Take-Profit
-    sl_atr_multiplier: float = 2.0  # SL = 2×ATR
-    tp_atr_multiplier: float = 4.0  # TP = 4×ATR (2:1 risk/reward)
-    
-    # Transaction costs (basis points)
-    base_spread: float = 0.5  # 0.5 bps base spread
-    slippage_baseline: float = 1.5  # 1.5 bps baseline slippage
-    market_impact_base: float = 1.0  # 1.0 bps market impact
+
+    # Stop-Loss and Take-Profit - ÉLARGI pour laisser respirer le trade
+    sl_atr_multiplier: float = 3.0  # SL = 3×ATR (augmenté de 2.0)
+    tp_atr_multiplier: float = 6.0  # TP = 6×ATR (augmenté proportionnellement)
+
+    # Transaction costs (basis points) - RÉDUITS pour l'apprentissage
+    # Vous remettrez les coûts réels lors du fine-tuning
+    base_spread: float = 0.1  # 0.1 bps base spread (réduit de 0.5)
+    slippage_baseline: float = 0.1  # 0.1 bps baseline slippage (réduit de 1.5)
+    market_impact_base: float = 0.1  # 0.1 bps market impact (réduit de 1.0)
     
     # Risk management
     margin_call_threshold: float = 0.20  # 20% of initial capital
@@ -81,6 +82,9 @@ class TradingEnvConfig:
 
     # DSR parameters (Differential Sharpe Ratio)
     dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation
+
+    # TEMPORAIRE: Désactiver la récompense complexe pour simplifier l'apprentissage
+    use_simple_reward: bool = True  # True = PnL pur, False = récompense complexe
     
     # Observation space
     n_features: int = 30
@@ -290,10 +294,17 @@ class RewardCalculator:
         """
         Calculate dense reward (per step).
 
-        Formula:
+        TEMPORAIRE: Si use_simple_reward=True, utilise une récompense simplifiée (PnL pur)
+        pour faciliter l'apprentissage initial. La récompense complexe peut être réactivée
+        en changeant use_simple_reward à False dans TradingEnvConfig.
+
+        Formula (simple):
+        dense_reward = log_return × 100 - small_position_penalty
+
+        Formula (complexe - DÉSACTIVÉE):
         dense_reward = 0.15 × R_return + 0.15 × R_dsr + 0.08 × R_downside
                      + 0.07 × R_cost + 0.05 × R_position + 0.50 × R_survival
-        
+
         Args:
             equity_t: Current equity
             equity_t_minus_1: Previous equity
@@ -302,10 +313,29 @@ class RewardCalculator:
             position_change: Position change magnitude
             transaction_cost: Transaction cost in dollars
             n_trades_today: Number of trades in last 288 steps
-            
+
         Returns:
             Dense reward value
         """
+        # TEMPORAIRE: Récompense simplifiée pour l'apprentissage initial
+        if self.config.use_simple_reward:
+            # Log return est plus stable numériquement
+            if equity_t > 0 and equity_t_minus_1 > 0:
+                log_return = np.log(equity_t / equity_t_minus_1)
+            else:
+                log_return = 0.0
+
+            # Reward simple : rendement pur
+            dense_reward = log_return * 100.0  # Scale up pour que ce soit ~1.0
+
+            # Petit penalty de maintien de position (pour éviter l'inertie)
+            # Mais pas de penalty "downside" complexe pour l'instant
+            if position_change > 0:
+                dense_reward -= position_change * 0.001  # Très petit penalty
+
+            return dense_reward
+
+        # ==================== RÉCOMPENSE COMPLEXE (DÉSACTIVÉE) ====================
         # Component 1: Returns (30%)
         r_t = (equity_t - equity_t_minus_1) / initial_capital
         R_return = r_t
