@@ -78,7 +78,7 @@ class TradingEnvConfig:
     terminal_weight: float = 0.30  # DECREASED from 0.60 - less delayed signal
 
     # Reward scaling to improve learning signal
-    reward_scale: float = 1.0  # Scale up rewards for better gradients
+    reward_scale: float = 100.0  # Scale up rewards for better gradients
 
     # DSR parameters (Differential Sharpe Ratio)
     dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation

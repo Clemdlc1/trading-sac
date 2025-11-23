@@ -1283,7 +1283,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 })
 
             # Sauvegarder checkpoint tous les 100 épisodes
-            if episode % 100 == 0 and episode > 0:
+            if episode % 5 == 0 and episode > 0:
                 for i, agent in enumerate(agents):
                     current_agent_id = agent_indices[i] if agent_id is None else agent_id
                     filename = f'checkpoint_ep{episode}_agent{current_agent_id}.pt'

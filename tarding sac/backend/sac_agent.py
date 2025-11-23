@@ -86,8 +86,8 @@ class SACConfig:
 
     # Entropy tuning
     auto_entropy_tuning: bool = True
-    target_entropy: float = -1.0  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
-    min_alpha: float = 0.01  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
+    target_entropy: float = 2  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
+    min_alpha: float = 0.2  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
     use_adaptive_entropy: bool = False  # Gradually reduce target entropy over training
     entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
 
@@ -308,9 +308,9 @@ class ReplayBuffer:
         self.capacity = capacity
         self.recency_weight = recency_weight
         self.stratify_ratio = stratify_ratio or {
-            'winning': 0.2,
-            'losing': 0.2,
-            'neutral': 0.6
+            'winning': 0.3,
+            'losing': 0.3,
+            'neutral': 0.4
         }
 
         # Pre-allocated numpy arrays for better memory locality
@@ -363,9 +363,9 @@ class ReplayBuffer:
         self.insert_steps[idx] = self.insert_count
 
         # Add to appropriate stratification list
-        if reward > 0.01:
+        if reward > 0.001:
             self.winning_indices.append(idx)
-        elif reward < -0.01:
+        elif reward < -0.001:
             self.losing_indices.append(idx)
         else:
             self.neutral_indices.append(idx)
@@ -500,7 +500,7 @@ class ReplayBuffer:
 
         for i in range(keep_count):
             reward = self.rewards[i]
-            if reward > 0.01:
+            if reward > 0.001:
                 self.winning_indices.append(i)
             elif reward < -0.01:
                 self.losing_indices.append(i)
