@@ -57,12 +57,32 @@ Votre fichier h5 doit contenir les données ET les features déjà calculées :
 !pip install -q gymnasium
 ```
 
-### Étape 4 : Upload et Exécuter le Script
+### Étape 4 : Exécuter le Script
+
+**Option A : Dans un Notebook Kaggle/Colab (Recommandé)**
+
+Copiez tout le contenu de `train_sac_standalone.py` dans une cellule, puis exécutez :
 
 ```python
-# Option 1: Copier-coller train_sac_standalone.py dans une cellule
+# Le script détecte automatiquement qu'il est dans un notebook
+# et affiche les instructions
 
-# Option 2: Upload via Add Data et exécuter
+# Lancez l'entraînement avec la fonction train_sac()
+trainer = train_sac(
+    h5_path='/kaggle/input/trading-eurusd-data/data.h5',
+    output_dir='/kaggle/working',
+    num_episodes=100,
+    eval_frequency=10,
+    checkpoint_frequency=5,
+    device='auto'
+)
+```
+
+**Option B : Via Ligne de Commande**
+
+Si vous uploadez le script via "Add Data" :
+
+```bash
 !python /kaggle/input/your-script/train_sac_standalone.py \
     --h5-path /kaggle/input/trading-eurusd-data/data.h5 \
     --output-dir /kaggle/working \
@@ -70,36 +90,6 @@ Votre fichier h5 doit contenir les données ET les features déjà calculées :
     --eval-frequency 10 \
     --checkpoint-frequency 5 \
     --device auto
-```
-
-### Ou directement en Python :
-
-```python
-import sys
-sys.path.append('/kaggle/working')
-
-# Copier le contenu de train_sac_standalone.py dans une cellule
-
-# Puis exécuter :
-from pathlib import Path
-
-train_data, train_features, val_data, val_features, test_data, test_features = load_data_from_h5(
-    '/kaggle/input/trading-eurusd-data/data.h5'
-)
-
-trainer = Trainer(
-    train_data=train_data,
-    train_features=train_features,
-    val_data=val_data,
-    val_features=val_features,
-    output_dir='/kaggle/working',
-    num_episodes=100,
-    eval_frequency=10,
-    checkpoint_frequency=5,
-    device='auto'
-)
-
-trainer.run()
 ```
 
 ## ⚙️ Paramètres

@@ -932,10 +932,57 @@ class Trainer:
 
 
 # =============================================================================
-# MAIN
+# MAIN - Compatible Notebook et CLI
 # =============================================================================
 
+def train_sac(
+    h5_path: str,
+    output_dir: str = "/kaggle/working",
+    num_episodes: int = 100,
+    eval_frequency: int = 10,
+    checkpoint_frequency: int = 5,
+    device: str = 'auto'
+):
+    """
+    Fonction d'entraînement SAC - Utilisable directement dans un notebook.
+
+    Args:
+        h5_path: Chemin vers le fichier h5 avec données + features
+        output_dir: Répertoire de sortie
+        num_episodes: Nombre d'épisodes d'entraînement
+        eval_frequency: Fréquence d'évaluation (en épisodes)
+        checkpoint_frequency: Fréquence de sauvegarde (en épisodes)
+        device: Device ('auto', 'cuda', ou 'cpu')
+
+    Returns:
+        Trainer instance avec stats
+    """
+    # Charger les données
+    train_data, train_features, val_data, val_features, test_data, test_features = load_data_from_h5(h5_path)
+
+    # Créer le trainer
+    trainer = Trainer(
+        train_data=train_data,
+        train_features=train_features,
+        val_data=val_data,
+        val_features=val_features,
+        output_dir=output_dir,
+        num_episodes=num_episodes,
+        eval_frequency=eval_frequency,
+        checkpoint_frequency=checkpoint_frequency,
+        device=device
+    )
+
+    # Lancer l'entraînement
+    trainer.run()
+
+    print("\n✅ Script terminé avec succès!")
+
+    return trainer
+
+
 def main():
+    """Point d'entrée CLI avec argparse"""
     parser = argparse.ArgumentParser(description="Entraînement SAC standalone pour Kaggle")
     parser.add_argument('--h5-path', type=str, required=True, help="Chemin vers le fichier h5")
     parser.add_argument('--output-dir', type=str, default="/kaggle/working", help="Répertoire de sortie")
@@ -946,15 +993,9 @@ def main():
 
     args = parser.parse_args()
 
-    # Charger les données
-    train_data, train_features, val_data, val_features, test_data, test_features = load_data_from_h5(args.h5_path)
-
-    # Créer le trainer
-    trainer = Trainer(
-        train_data=train_data,
-        train_features=train_features,
-        val_data=val_data,
-        val_features=val_features,
+    # Appeler la fonction d'entraînement
+    train_sac(
+        h5_path=args.h5_path,
         output_dir=args.output_dir,
         num_episodes=args.num_episodes,
         eval_frequency=args.eval_frequency,
@@ -962,11 +1003,38 @@ def main():
         device=args.device
     )
 
-    # Lancer l'entraînement
-    trainer.run()
 
-    print("\n✅ Script terminé avec succès!")
+def is_notebook():
+    """Détecte si on est dans un notebook Jupyter/Colab"""
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook ou qtconsole
+        elif 'google.colab' in str(get_ipython()):
+            return True   # Google Colab
+        else:
+            return False  # Autre type de shell
+    except NameError:
+        return False      # IPython pas disponible
 
 
 if __name__ == "__main__":
-    main()
+    # Si on est dans un notebook, ne pas appeler main() automatiquement
+    # L'utilisateur doit appeler train_sac() manuellement
+    if not is_notebook():
+        main()
+    else:
+        print("=" * 70)
+        print("📓 Mode Notebook détecté!")
+        print("=" * 70)
+        print("\nUtilisez la fonction train_sac() directement:")
+        print("\nExemple:")
+        print("  trainer = train_sac(")
+        print("      h5_path='/kaggle/input/your-data/data.h5',")
+        print("      output_dir='/kaggle/working',")
+        print("      num_episodes=100,")
+        print("      eval_frequency=10,")
+        print("      checkpoint_frequency=5,")
+        print("      device='auto'")
+        print("  )")
+        print("\n" + "=" * 70)
