@@ -86,7 +86,8 @@ class SACConfig:
 
     # Entropy tuning
     auto_entropy_tuning: bool = True
-    target_entropy: float = 0.3  # -dim(action)
+    target_entropy: float = -1.0  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
+    min_alpha: float = 0.01  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
     use_adaptive_entropy: bool = False  # Gradually reduce target entropy over training
     entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
 
@@ -1094,7 +1095,14 @@ class SACAgent:
                 alpha_loss.backward()
                 self.alpha_optimizer.step()
 
+            # AJOUT: Clamper log_alpha pour éviter l'effondrement d'entropie
+            # Empêche alpha de tomber à 0 (ce qui causerait une politique déterministe)
+            self.log_alpha.data.clamp_(min=-5.0, max=1.0)  # exp(-5) ≈ 0.0067, exp(1) ≈ 2.718
             self.alpha = self.log_alpha.exp()
+
+            # Forcer un alpha minimum si besoin
+            self.alpha = torch.max(self.alpha, torch.tensor(self.config.min_alpha).to(device))
+
             alpha_loss = alpha_loss.item()
 
         return actor_loss.item(), alpha_loss
