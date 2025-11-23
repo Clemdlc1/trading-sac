@@ -650,7 +650,7 @@ def load_data_from_h5(h5_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Data
     """
     Charge les données depuis le fichier h5
 
-    Structure attendue:
+    Structure attendue (créée par merge_h5_files.py):
         /train/EURUSD/ : timestamp, open, high, low, close
         /train/features/ : 30 colonnes de features
         /val/EURUSD/ : idem
@@ -659,21 +659,46 @@ def load_data_from_h5(h5_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Data
     print(f"\n📊 Chargement des données depuis {h5_path}")
 
     with h5py.File(h5_path, 'r') as f:
+        # Vérifier la structure
+        print("🔍 Inspection de la structure h5...")
+        root_keys = list(f.keys())
+        print(f"   Groupes racine: {root_keys}")
+
         # Train data
-        train_timestamps = f['/train/EURUSD/timestamp'][:]
-        train_ohlc = pd.DataFrame({
-            'timestamp': train_timestamps,
-            'open': f['/train/EURUSD/open'][:],
-            'high': f['/train/EURUSD/high'][:],
-            'low': f['/train/EURUSD/low'][:],
-            'close': f['/train/EURUSD/close'][:]
-        })
+        try:
+            train_timestamps = f['/train/EURUSD/timestamp'][:]
+            train_ohlc = pd.DataFrame({
+                'timestamp': train_timestamps,
+                'open': f['/train/EURUSD/open'][:],
+                'high': f['/train/EURUSD/high'][:],
+                'low': f['/train/EURUSD/low'][:],
+                'close': f['/train/EURUSD/close'][:]
+            })
+        except KeyError as e:
+            raise KeyError(
+                f"❌ Erreur: Structure h5 incorrecte!\n"
+                f"   Attendu: /train/EURUSD/timestamp\n"
+                f"   Trouvé: {list(f['/train'].keys()) if '/train' in f else 'Aucun groupe /train'}\n\n"
+                f"💡 Solution:\n"
+                f"   1. Utilisez merge_h5_files.py pour créer un fichier combiné:\n"
+                f"      python merge_h5_files.py\n"
+                f"   2. Uploadez 'combined_data.h5' sur Kaggle\n"
+                f"   3. Utilisez ce fichier comme h5_path\n"
+            ) from e
 
         # Train features
-        feature_names = [key for key in f['/train/features/'].keys()]
-        train_features = pd.DataFrame({
-            name: f[f'/train/features/{name}'][:] for name in feature_names
-        })
+        try:
+            feature_names = sorted([key for key in f['/train/features/'].keys()])
+            train_features = pd.DataFrame({
+                name: f[f'/train/features/{name}'][:] for name in feature_names
+            })
+        except KeyError as e:
+            raise KeyError(
+                f"❌ Erreur: Features non trouvées!\n"
+                f"   Attendu: /train/features/\n"
+                f"   Trouvé: {list(f['/train'].keys()) if '/train' in f else 'Aucun'}\n\n"
+                f"💡 Utilisez merge_h5_files.py pour combiner les fichiers.\n"
+            ) from e
 
         # Val data
         val_timestamps = f['/val/EURUSD/timestamp'][:]
@@ -711,6 +736,7 @@ def load_data_from_h5(h5_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Data
     print(f"   Train: {len(train_ohlc)} candles, {train_features.shape[1]} features")
     print(f"   Val:   {len(val_ohlc)} candles")
     print(f"   Test:  {len(test_ohlc)} candles")
+    print(f"   Features: {', '.join(feature_names[:5])}... ({len(feature_names)} total)")
 
     return train_ohlc, train_features, val_ohlc, val_features, test_ohlc, test_features
 

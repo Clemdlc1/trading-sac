@@ -9,20 +9,30 @@ Sur Kaggle, vous avez besoin de **2 fichiers seulement** :
 1. **train_sac_standalone.py** (ce script - standalone, aucune dépendance backend)
 2. **Votre fichier .h5** avec les données et features
 
-## 📊 Structure du Fichier H5
+## 📊 Préparation du Fichier H5
 
-Votre fichier h5 doit contenir les données ET les features déjà calculées :
+⚠️ **Important** : Votre système génère 2 fichiers h5 séparés :
+- `processed_data.h5` (données OHLC)
+- `features_normalized.h5` (features calculées)
+
+Vous devez les **combiner en un seul fichier** avant d'uploader sur Kaggle.
+
+### Étape de Fusion (EN LOCAL)
+
+```bash
+# Sur votre machine locale
+cd "tarding sac"
+python merge_h5_files.py
+```
+
+Cela crée `combined_data.h5` avec cette structure :
 
 ```
 /train/
   /EURUSD/
-    timestamp (int64)
-    open, high, low, close (float32)
+    timestamp, open, high, low, close
   /features/
-    feature_1 (float32)
-    feature_2 (float32)
-    ...
-    feature_30 (float32)
+    feature_1, feature_2, ..., feature_30
 
 /val/
   /EURUSD/
@@ -30,12 +40,14 @@ Votre fichier h5 doit contenir les données ET les features déjà calculées :
   /features/
     (même structure)
 
-/test/  (optionnel)
+/test/
   /EURUSD/
     (même structure)
   /features/
     (même structure)
 ```
+
+**Uploadez UNIQUEMENT `combined_data.h5` sur Kaggle** (pas les fichiers séparés).
 
 ## 🚀 Utilisation sur Kaggle
 
