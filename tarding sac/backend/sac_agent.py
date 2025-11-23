@@ -60,40 +60,40 @@ class SACConfig:
     # Learning parameters
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
-    alpha_lr: float = 3e-5
+    alpha_lr: float = 3e-4
     gamma: float = 0.95
     tau: float = 0.005
 
     # Learning rate scheduling
-    use_lr_scheduler: bool = True
-    lr_decay_factor: float = 0.995  # Decay LR by this factor every 1000 steps
+    use_lr_scheduler: bool = False
+    lr_decay_factor: float = 0.999  # Decay LR by this factor every 1000 steps
     min_lr: float = 1e-5  # Minimum learning rate
 
     # Replay buffer
     buffer_capacity: int = 100000
     batch_size: int = 1024 
-    warmup_steps: int = 5000  # INCREASED from 1000 - agent needs MORE exploration before learning
+    warmup_steps: int = 10000  # INCREASED from 1000 - agent needs MORE exploration before learning
 
     # Adaptive batch sizing
-    use_adaptive_batch: bool = True
-    min_batch_size: int = 128  # Minimum batch size for very early training
-    adaptive_batch_threshold: int = 5000  # Buffer size to reach full batch_size
+    use_adaptive_batch: bool = False
+    min_batch_size: int = 256  # Minimum batch size for very early training
+    adaptive_batch_threshold: int = 10000  # Buffer size to reach full batch_size
 
     # Regularization
     weight_decay: float = 1e-3
-    actor_dropout: float = 0.05  # REDUCED from 0.1 to 0.05
-    critic_dropout: float = 0.1  # REDUCED from 0.2 to 0.1
+    actor_dropout: float = 0.03  # REDUCED from 0.1 to 0.05
+    critic_dropout: float = 0.05  # REDUCED from 0.2 to 0.1
 
     # Entropy tuning
     auto_entropy_tuning: bool = True
-    target_entropy: float = 2  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
-    min_alpha: float = 0.2  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
+    target_entropy: float = -0.3  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
+    min_alpha: float = 0.1  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
     use_adaptive_entropy: bool = False  # Gradually reduce target entropy over training
     entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
 
     # Training
-    update_ratio: float = 1.0  # 1 gradient update per env step
-    max_grad_norm: float = 2.0  # INCREASED from 1.0 to 2.0
+    update_ratio: float = 2.0  # 1 gradient update per env step
+    max_grad_norm: float = 3.0  # INCREASED from 1.0 to 2.0
 
     # Progressive training
     use_curriculum: bool = True

@@ -71,14 +71,14 @@ class TradingEnvConfig:
     # Learning phases
     # REDUCED from 20000 to 5000 to match SAC warmup_steps and reduce bias from forced actions
     # During warmup: actions forced to 0, buffer fills, but networks don't update
-    no_trading_warmup_steps: int = 5000  # First 5k steps: ZERO trading, buffer filling phase
+    no_trading_warmup_steps: int = 10000  # First 10k steps: ZERO trading, buffer filling phase
     
     # Reward function parameters
     dense_weight: float = 0.70  # INCREASED from 0.40 - more immediate feedback
     terminal_weight: float = 0.30  # DECREASED from 0.60 - less delayed signal
 
     # Reward scaling to improve learning signal
-    reward_scale: float = 100.0  # Scale up rewards for better gradients
+    reward_scale: float = 10.0  # Scale up rewards for better gradients
 
     # DSR parameters (Differential Sharpe Ratio)
     dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation
@@ -409,21 +409,25 @@ class RewardCalculator:
     ) -> float:
         """
         Calculate terminal reward (end of episode).
-        
+
         Formula:
-        terminal_reward = 0.35 × R_sortino + 0.25 × R_calmar 
+        terminal_reward = 0.35 × R_sortino + 0.25 × R_calmar
                         + 0.25 × R_drawdown + 0.15 × R_expectancy
-        
+
         Args:
             returns_episode: All returns during episode
             equity_curve: Equity at each step
             trades: List of completed trades
-            
+
         Returns:
             Terminal reward value
         """
         if len(returns_episode) < 10:
             return -1.0  # Penalty for too short episode
+
+        # CRITICAL FIX: Penalize agents that don't trade
+        if len(trades) < 5:
+            return -5.0  # Strong penalty for insufficient trading activity
         
         returns_array = np.array(returns_episode)
         
@@ -704,8 +708,9 @@ class TradingEnvironment(gym.Env):
 
         # CRITICAL FIX: Require minimum meaningful position change to count as trade
         # This prevents micro-adjustments from stochastic policy counting as trades
-        # Threshold: 10% of typical position size (≈0.02 lots for 100k account)
-        MIN_POSITION_CHANGE = 0.1  # Minimum lots to trigger a trade
+        # UPDATED: Reduced from 0.1 to 0.02 to match realistic position sizes
+        # With risk_per_trade=0.0005 (0.05%), typical positions are 0.05-0.09 lots
+        MIN_POSITION_CHANGE = 0.05  # 0.03 lots minimum change to count as trade
 
         if position_change > MIN_POSITION_CHANGE:
             # Calculate transaction cost
@@ -738,6 +743,13 @@ class TradingEnvironment(gym.Env):
                 self.total_trades += 1
         else:
             cost = 0.0
+            # Log rejected actions for diagnostic purposes
+            if position_change > 1e-6:  # Only log if there was actual position change intent
+                logger.debug(
+                    f"Action rejected: position_change={position_change:.4f} < "
+                    f"{MIN_POSITION_CHANGE} (target={target_position:.4f}, "
+                    f"current={self.position:.4f})"
+                )
         
         # Update equity based on unrealized P&L
         if abs(self.position) > 1e-6:
@@ -809,16 +821,10 @@ class TradingEnvironment(gym.Env):
                 self.trades
             )
 
-            # BONUS: Reward for completing full episode without catastrophic failure
-            # Scaled by actual completion ratio
-            completion_ratio = self.current_step / self.episode_length
-            if completion_ratio >= 0.95:  # Completed at least 95% of episode
-                survival_bonus = 2.0  # Significant bonus for full completion
-                terminal_reward += survival_bonus
-                logger.info(
-                    f"Episode completed successfully! Steps: {self.current_step}/"
-                    f"{self.episode_length}, bonus: +{survival_bonus:.2f}"
-                )
+            # NO SURVIVAL BONUS - Agent must learn profitable trading, not just survival
+            logger.info(
+                f"Episode completed! Steps: {self.current_step}/{self.episode_length}"
+            )
 
         # Combine rewards
         total_reward = (

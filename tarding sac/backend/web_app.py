@@ -432,7 +432,7 @@ def start_training():
 
         # Paramètres d'entraînement
         num_episodes = data.get('num_episodes', 1000)
-        batch_size = data.get('batch_size', 512)  # Augmenté pour mieux utiliser le GPU
+        batch_size = data.get('batch_size', 1024)  # Augmenté pour mieux utiliser le GPU
         from_checkpoint = data.get('from_checkpoint', None)
         agent_id = data.get('agent_id', None)  # None = tous les agents, sinon l'ID spécifique
 
