@@ -963,6 +963,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 # SAC specific
                 'alpha_values': [],
                 'target_entropies': [],
+                'policy_entropy': [],
+                'entropy_gap': [],
+
+                # Q-values and TD error
+                'q1_mean': [],
+                'q1_std': [],
+                'q_target_mean': [],
+                'td_error_mean': [],
 
                 # Learning rates
                 'actor_lr': [],
@@ -982,7 +990,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 'episode_steps': [],
                 'total_steps': [],
 
-                # Gradient stats (si disponible)
+                # Gradient stats
                 'actor_grad_norm': [],
                 'critic_grad_norm': [],
             }
@@ -1031,6 +1039,16 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 actor_loss_sum = 0.0
                 alpha_loss_sum = 0.0
                 update_count = 0
+
+                # Nouvelles métriques RL
+                q1_mean_sum = 0.0
+                q1_std_sum = 0.0
+                q_target_mean_sum = 0.0
+                td_error_mean_sum = 0.0
+                policy_entropy_sum = 0.0
+                entropy_gap_sum = 0.0
+                actor_grad_norm_sum = 0.0
+                critic_grad_norm_sum = 0.0
 
                 # Tracking pour actions (exploration)
                 episode_actions = []
@@ -1098,6 +1116,17 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                                 critic_loss_sum += losses.get('critic_loss', 0)
                                 actor_loss_sum += losses.get('actor_loss', 0)
                                 alpha_loss_sum += losses.get('alpha_loss', 0)
+
+                                # Collecter les nouvelles métriques RL
+                                q1_mean_sum += losses.get('q1_mean', 0)
+                                q1_std_sum += losses.get('q1_std', 0)
+                                q_target_mean_sum += losses.get('q_target_mean', 0)
+                                td_error_mean_sum += losses.get('td_error_mean', 0)
+                                policy_entropy_sum += losses.get('policy_entropy', 0)
+                                entropy_gap_sum += losses.get('entropy_gap', 0)
+                                actor_grad_norm_sum += losses.get('actor_grad_norm', 0)
+                                critic_grad_norm_sum += losses.get('critic_grad_norm', 0)
+
                                 update_count += 1
 
                     episode_reward += reward
@@ -1188,6 +1217,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 # SAC specific
                 metrics_history['alpha_values'].append(float(agent.alpha.item()))
                 metrics_history['target_entropies'].append(float(agent.target_entropy) if hasattr(agent, 'target_entropy') else 0)
+                metrics_history['policy_entropy'].append(float(policy_entropy_sum / update_count) if update_count > 0 else 0)
+                metrics_history['entropy_gap'].append(float(entropy_gap_sum / update_count) if update_count > 0 else 0)
+
+                # Q-values and TD error
+                metrics_history['q1_mean'].append(float(q1_mean_sum / update_count) if update_count > 0 else 0)
+                metrics_history['q1_std'].append(float(q1_std_sum / update_count) if update_count > 0 else 0)
+                metrics_history['q_target_mean'].append(float(q_target_mean_sum / update_count) if update_count > 0 else 0)
+                metrics_history['td_error_mean'].append(float(td_error_mean_sum / update_count) if update_count > 0 else 0)
 
                 # Learning rates
                 metrics_history['actor_lr'].append(actor_lr)
@@ -1207,19 +1244,22 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 metrics_history['episode_steps'].append(episode_steps)
                 metrics_history['total_steps'].append(int(agent.total_steps))
 
+                # Gradient stats
+                metrics_history['actor_grad_norm'].append(float(actor_grad_norm_sum / update_count) if update_count > 0 else 0)
+                metrics_history['critic_grad_norm'].append(float(critic_grad_norm_sum / update_count) if update_count > 0 else 0)
+
                 # PAS DE LIMITATION - On garde tout l'historique depuis l'épisode 0
 
-                # Sauvegarder l'état ET les métriques tous les 10 épisodes (optimisation performance)
-                if episode % 10 == 0:
-                    system_state.save_training_state()
+                # Sauvegarder l'état ET les métriques tous les épisodes
+                system_state.save_training_state()
 
-                    # Sauvegarder l'historique complet des métriques dans un fichier JSON
-                    try:
-                        with open(metrics_file, 'w') as f:
-                            json.dump(metrics_history, f, indent=2)
-                        logger.info(f"Métriques sauvegardées: {len(metrics_history['episodes'])} épisodes")
-                    except Exception as e:
-                        logger.error(f"Erreur sauvegarde métriques: {e}")
+                # Sauvegarder l'historique complet des métriques dans un fichier JSON
+                try:
+                    with open(metrics_file, 'w') as f:
+                        json.dump(metrics_history, f, indent=2)
+                    logger.info(f"Métriques sauvegardées: {len(metrics_history['episodes'])} épisodes")
+                except Exception as e:
+                    logger.error(f"Erreur sauvegarde métriques: {e}")
 
                 # Envoyer TOUT l'historique au frontend (pas de limitation)
                 # Le frontend peut gérer l'affichage (zoom, pan, etc.)
@@ -1282,7 +1322,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     'metrics_history': history_to_send
                 })
 
-            # Sauvegarder checkpoint tous les 100 épisodes
+            # Sauvegarder checkpoint et CSV tous les 5 épisodes
             if episode % 5 == 0 and episode > 0:
                 for i, agent in enumerate(agents):
                     current_agent_id = agent_indices[i] if agent_id is None else agent_id

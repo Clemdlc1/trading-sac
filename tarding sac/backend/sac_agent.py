@@ -848,12 +848,12 @@ class SACAgent:
             rewards = self._normalize_rewards(rewards)
 
         # Update critics
-        critic_loss = self._update_critics(
+        critic_metrics = self._update_critics(
             states, actions, rewards, next_states, dones, regime
         )
 
         # Update actor
-        actor_loss, alpha_loss = self._update_actor(states, regime)
+        actor_metrics = self._update_actor(states, regime)
 
         # Update target networks
         self._soft_update_targets()
@@ -888,11 +888,20 @@ class SACAgent:
                     f"Critic={self.critic_optimizer.param_groups[0]['lr']:.6f}"
                 )
 
+        # Merge all metrics
         return {
-            'critic_loss': critic_loss,
-            'actor_loss': actor_loss,
-            'alpha_loss': alpha_loss if alpha_loss is not None else 0.0,
-            'alpha': self.alpha.item()
+            'critic_loss': critic_metrics['critic_loss'],
+            'actor_loss': actor_metrics['actor_loss'],
+            'alpha_loss': actor_metrics['alpha_loss'],
+            'alpha': self.alpha.item(),
+            'q1_mean': critic_metrics['q1_mean'],
+            'q1_std': critic_metrics['q1_std'],
+            'q_target_mean': critic_metrics['q_target_mean'],
+            'td_error_mean': critic_metrics['td_error_mean'],
+            'critic_grad_norm': critic_metrics['critic_grad_norm'],
+            'policy_entropy': actor_metrics['policy_entropy'],
+            'entropy_gap': actor_metrics['entropy_gap'],
+            'actor_grad_norm': actor_metrics['actor_grad_norm']
         }
     
     def _normalize_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
@@ -928,7 +937,7 @@ class SACAgent:
         next_states: torch.Tensor,
         dones: torch.Tensor,
         regime: Optional[str] = None
-    ) -> float:
+    ) -> Dict[str, float]:
         """Update critic networks with mixed precision."""
         with torch.no_grad():
             if self.use_amp:
@@ -985,6 +994,13 @@ class SACAgent:
                     current_q1 = self.critic1(states, actions)
                     current_q2 = self.critic2(states, actions)
 
+                # Extract metrics before loss computation
+                q1_mean = current_q1.mean().item()
+                q1_std = current_q1.std().item()
+                q_target_mean = target_q.mean().item()
+                td_error = (current_q1 - target_q).abs()
+                td_error_mean = td_error.mean().item()
+
                 critic1_loss = F.mse_loss(current_q1, target_q)
                 critic2_loss = F.mse_loss(current_q2, target_q)
                 critic_loss = critic1_loss + critic2_loss
@@ -992,6 +1008,20 @@ class SACAgent:
             # Backward with gradient scaling
             self.scaler.scale(critic_loss).backward()
             self.scaler.unscale_(self.critic_optimizer)
+
+            # Calculate gradient norm BEFORE clipping
+            critic_params = (
+                list(self.critic1.parameters()) + list(self.critic2.parameters())
+                if not self.config.use_regime_qfuncs else
+                list(self.critic1_low.parameters()) + list(self.critic2_low.parameters()) +
+                list(self.critic1_high.parameters()) + list(self.critic2_high.parameters())
+            )
+            critic_grad_norm = 0.0
+            for p in critic_params:
+                if p.grad is not None:
+                    critic_grad_norm += p.grad.data.norm(2).item() ** 2
+            critic_grad_norm = critic_grad_norm ** 0.5
+
             torch.nn.utils.clip_grad_norm_(
                 self.critic1.parameters() if not self.config.use_regime_qfuncs else
                 list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
@@ -1010,11 +1040,32 @@ class SACAgent:
                 current_q1 = self.critic1(states, actions)
                 current_q2 = self.critic2(states, actions)
 
+            # Extract metrics before loss computation (no AMP case)
+            q1_mean = current_q1.mean().item()
+            q1_std = current_q1.std().item()
+            q_target_mean = target_q.mean().item()
+            td_error = (current_q1 - target_q).abs()
+            td_error_mean = td_error.mean().item()
+
             critic1_loss = F.mse_loss(current_q1, target_q)
             critic2_loss = F.mse_loss(current_q2, target_q)
             critic_loss = critic1_loss + critic2_loss
 
             critic_loss.backward()
+
+            # Calculate gradient norm BEFORE clipping (no AMP case)
+            critic_params = (
+                list(self.critic1.parameters()) + list(self.critic2.parameters())
+                if not self.config.use_regime_qfuncs else
+                list(self.critic1_low.parameters()) + list(self.critic2_low.parameters()) +
+                list(self.critic1_high.parameters()) + list(self.critic2_high.parameters())
+            )
+            critic_grad_norm = 0.0
+            for p in critic_params:
+                if p.grad is not None:
+                    critic_grad_norm += p.grad.data.norm(2).item() ** 2
+            critic_grad_norm = critic_grad_norm ** 0.5
+
             torch.nn.utils.clip_grad_norm_(
                 self.critic1.parameters() if not self.config.use_regime_qfuncs else
                 list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
@@ -1022,13 +1073,20 @@ class SACAgent:
             )
             self.critic_optimizer.step()
 
-        return critic_loss.item()
+        return {
+            'critic_loss': critic_loss.item(),
+            'q1_mean': q1_mean,
+            'q1_std': q1_std,
+            'q_target_mean': q_target_mean,
+            'td_error_mean': td_error_mean,
+            'critic_grad_norm': critic_grad_norm
+        }
     
     def _update_actor(
         self,
         states: torch.Tensor,
         regime: Optional[str] = None
-    ) -> Tuple[float, Optional[float]]:
+    ) -> Dict[str, float]:
         """Update actor network and alpha with mixed precision."""
         self.actor_optimizer.zero_grad()
 
@@ -1036,6 +1094,10 @@ class SACAgent:
         if self.use_amp:
             with torch.cuda.amp.autocast():
                 actions, log_probs = self.actor.sample(states)
+
+                # Extract policy entropy
+                policy_entropy = -log_probs.mean().item()
+                entropy_gap = policy_entropy - abs(self.target_entropy)
 
                 # Detach Q-values to prevent backprop through critic
                 if self.config.use_regime_qfuncs:
@@ -1055,10 +1117,22 @@ class SACAgent:
             # Backward with gradient scaling
             self.scaler.scale(actor_loss).backward()
             self.scaler.unscale_(self.actor_optimizer)
+
+            # Calculate gradient norm BEFORE clipping
+            actor_grad_norm = 0.0
+            for p in self.actor.parameters():
+                if p.grad is not None:
+                    actor_grad_norm += p.grad.data.norm(2).item() ** 2
+            actor_grad_norm = actor_grad_norm ** 0.5
+
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
             self.scaler.step(self.actor_optimizer)
         else:
             actions, log_probs = self.actor.sample(states)
+
+            # Extract policy entropy (no AMP case)
+            policy_entropy = -log_probs.mean().item()
+            entropy_gap = policy_entropy - abs(self.target_entropy)
 
             # Detach Q-values to prevent backprop through critic
             if self.config.use_regime_qfuncs:
@@ -1076,6 +1150,14 @@ class SACAgent:
             actor_loss = (self.alpha * log_probs - q).mean()
 
             actor_loss.backward()
+
+            # Calculate gradient norm BEFORE clipping (no AMP case)
+            actor_grad_norm = 0.0
+            for p in self.actor.parameters():
+                if p.grad is not None:
+                    actor_grad_norm += p.grad.data.norm(2).item() ** 2
+            actor_grad_norm = actor_grad_norm ** 0.5
+
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
             self.actor_optimizer.step()
 
@@ -1105,7 +1187,13 @@ class SACAgent:
 
             alpha_loss = alpha_loss.item()
 
-        return actor_loss.item(), alpha_loss
+        return {
+            'actor_loss': actor_loss.item(),
+            'alpha_loss': alpha_loss if alpha_loss is not None else 0.0,
+            'policy_entropy': policy_entropy,
+            'entropy_gap': entropy_gap,
+            'actor_grad_norm': actor_grad_norm
+        }
     
     def _soft_update_targets(self):
         """Soft update target networks."""
