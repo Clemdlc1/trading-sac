@@ -87,9 +87,13 @@ class TradingEnvConfig:
     use_simple_reward: bool = True  # True = PnL pur, False = récompense complexe
     
     # Observation space
-    n_features: int = 30
+    n_features: int = 31  # 30 technical features + 1 position feature
     obs_min: float = -10.0
     obs_max: float = 10.0
+
+    # Anti-overtrading parameters
+    overtrading_dead_zone: float = 0.15  # If |action - current_position| < threshold, hold
+    overtrading_penalty: float = 0.0001  # Small penalty for small position changes
     
     # Action space
     action_min: float = -1.0
@@ -553,19 +557,19 @@ class TradingEnvironment(gym.Env):
         hidden_columns = ['raw_close', 'timestamp']
         self.features = self.features.drop(columns=[col for col in hidden_columns if col in self.features.columns])
         
-        # Gym spaces
+        # Gym spaces - Using float64 for maximum precision
         self.observation_space = spaces.Box(
             low=self.config.obs_min,
             high=self.config.obs_max,
             shape=(self.config.n_features,),
-            dtype=np.float32
+            dtype=np.float64
         )
-        
+
         self.action_space = spaces.Box(
             low=self.config.action_min,
             high=self.config.action_max,
             shape=(1,),
-            dtype=np.float32
+            dtype=np.float64
         )
         
         # Components
@@ -673,6 +677,19 @@ class TradingEnvironment(gym.Env):
         # Convert action to scalar
         action = float(action[0])
         action = np.clip(action, self.config.action_min, self.config.action_max)
+
+        # Anti-overtrading: Dead zone logic
+        # If the action is too similar to current position, force hold to avoid transaction costs
+        position_difference = abs(action - self.position)
+
+        if position_difference < self.config.overtrading_dead_zone and abs(self.position) > 1e-6:
+            # Force action to equal current position (hold)
+            original_action = action
+            action = self.position
+            logger.debug(
+                f"Anti-overtrading: Action {original_action:.4f} too close to position {self.position:.4f}, "
+                f"forcing hold (diff={position_difference:.4f} < {self.config.overtrading_dead_zone})"
+            )
 
         # Get current state
         idx = self.episode_start + self.current_step
@@ -870,17 +887,26 @@ class TradingEnvironment(gym.Env):
     
     def _get_observation(self) -> np.ndarray:
         """
-        Get current observation (features).
+        Get current observation (features + position).
 
-        IMPORTANT: Returns only the 30 normalized features.
+        IMPORTANT: Returns 30 normalized features + 1 position feature (total: 31).
         Hidden columns (raw_close, timestamp) are NOT included in observations.
+        Position feature allows agent to be aware of current position and avoid overtrading.
         """
         idx = self.episode_start + self.current_step
 
         if idx >= len(self.features):
             idx = len(self.features) - 1
 
-        obs = self.features.iloc[idx].values.astype(np.float32)
+        # Get base features with full float64 precision
+        obs = self.features.iloc[idx].values.astype(np.float64)
+
+        # Add current position as feature (normalized, already in [-1, 1] range)
+        # This allows agent to be aware of its current position
+        position_feature = np.array([self.position], dtype=np.float64)
+
+        # Concatenate features and position
+        obs = np.concatenate([obs, position_feature])
 
         # Clip to observation space bounds
         obs = np.clip(obs, self.config.obs_min, self.config.obs_max)
