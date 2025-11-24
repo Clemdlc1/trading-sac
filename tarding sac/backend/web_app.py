@@ -130,8 +130,8 @@ class TradingSystemState:
                     'pairs': ['EURUSD', 'USDJPY', 'GBPUSD', 'USDCAD']
                 },
                 'trading': {
-                    'initial_capital': 10000.0,
-                    'risk_per_trade': 0.02,
+                    'initial_capital': 500000.0,
+                    'risk_per_trade': 0.05,
                     'max_daily_loss': 0.05,
                     'max_drawdown': 0.15
                 },
@@ -1072,6 +1072,13 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
 
                     # Logger la transition pour le CSV seulement si c'est un épisode de checkpoint (optimisation)
                     if should_log_transitions:
+                        # Get current index for hidden columns
+                        current_idx = env.episode_start + env.current_step - 1  # -1 because step was already incremented
+
+                        # Get raw_close and timestamp from hidden columns
+                        raw_close = float(env.raw_close[current_idx]) if hasattr(env, 'raw_close') else float(info.get('equity', 0)) / 100000.0
+                        timestamp = env.data.iloc[current_idx]['timestamp'] if current_idx < len(env.data) else datetime.now()
+
                         transition_data = {
                             'episode': episode + 1,
                             'agent_id': agent_indices[agent_idx] if agent_id is None else agent_id,
@@ -1082,7 +1089,10 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                             'equity': float(info.get('equity', 0)),
                             'position': float(info.get('position', 0)),
                             'cumulative_reward': episode_reward + reward,
-                            'episode_start_time': episode_start_time.isoformat()
+                            'episode_start_time': episode_start_time.isoformat(),
+                            # Hidden columns for precise analysis
+                            'raw_close': raw_close,  # Non-normalized price
+                            'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)  # Exact datetime
                         }
 
                         # Ajouter les observations (state) - toutes les features

@@ -78,7 +78,7 @@ class TradingEnvConfig:
     terminal_weight: float = 0.10  # DECREASED from 0.60 - less delayed signal
 
     # Reward scaling to improve learning signal
-    reward_scale: float = 1.0  # Scale up rewards for better gradients
+    reward_scale: float = 10.0  # Scale up rewards for better gradients
 
     # DSR parameters (Differential Sharpe Ratio)
     dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation
@@ -722,7 +722,7 @@ class TradingEnvironment(gym.Env):
         # This prevents micro-adjustments from stochastic policy counting as trades
         # UPDATED: Reduced from 0.1 to 0.02 to match realistic position sizes
         # With risk_per_trade=0.0005 (0.05%), typical positions are 0.05-0.09 lots
-        MIN_POSITION_CHANGE = 0.05  # 0.03 lots minimum change to count as trade
+        MIN_POSITION_CHANGE = 0.01  # 0.03 lots minimum change to count as trade
 
         if position_change > MIN_POSITION_CHANGE:
             # Calculate transaction cost
