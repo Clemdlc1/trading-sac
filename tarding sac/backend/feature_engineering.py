@@ -593,9 +593,9 @@ class FeatureEngineer:
             'session_european', 'session_us', 'session_asian'
         ]
 
-        # Increased min_periods to 1 day of data (288 bars) for more stable warmup
+        # Increased min_periods to 1000 bars for very stable warmup
         # This prevents the constant 0 values on first 100-1000 data points
-        warmup_period = 288  # 1 day of 5-minute bars
+        warmup_period = 1000  # ~3.5 days of 5-minute bars
 
         for col in features.columns:
             if col in non_normalized_features:
