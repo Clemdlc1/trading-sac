@@ -86,14 +86,14 @@ class SACConfig:
 
     # Entropy tuning
     auto_entropy_tuning: bool = True
-    target_entropy: float = -0.3  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
+    target_entropy: float = -0.5  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
     min_alpha: float = 0.1  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
     use_adaptive_entropy: bool = False  # Gradually reduce target entropy over training
     entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
 
     # Training
     update_ratio: float = 2.0  # 1 gradient update per env step
-    max_grad_norm: float = 3.0  # INCREASED from 1.0 to 2.0
+    max_grad_norm: float = 2.0  # INCREASED from 1.0 to 2.0
 
     # Progressive training
     use_curriculum: bool = True
@@ -363,7 +363,7 @@ class ReplayBuffer:
         self.insert_steps[idx] = self.insert_count
 
         # Add to appropriate stratification list
-        if reward > 0.001:
+        if reward > 0.0001:
             self.winning_indices.append(idx)
         elif reward < -0.001:
             self.losing_indices.append(idx)
@@ -374,101 +374,85 @@ class ReplayBuffer:
         self.size = min(self.size + 1, self.capacity)
         self.insert_count += 1
 
-    def sample(self, batch_size: int) -> Dict[str, np.ndarray]:
+    def sample(self, batch_size: int):
         """
-        Sample batch with recency weighting and stratification (optimized).
-
+        Sample avec stratification pour équilibrer winning/losing/neutral.
+        
+        Target distribution:
+        - 40% winning (reward > 0.001)
+        - 40% losing (reward < -0.001)
+        - 20% neutral (|reward| <= 0.001)
+        
         Args:
-            batch_size: Batch size
-
+            batch_size: Number of samples to draw
+            
         Returns:
-            Dictionary of batched transitions
+            Dictionary with keys: 'states', 'actions', 'rewards', 'next_states', 'dones'
         """
+        # Vérifier qu'on a assez de samples
         if self.size < batch_size:
-            return None
-
-        # Calculate recency weights (vectorized)
-        current_step = self.insert_count
-        ages = current_step - self.insert_steps[:self.size]
-        weights = np.exp(-self.recency_weight * ages)
-        weights = weights / weights.sum()
-
-        # Sample from each category
-        n_winning = int(batch_size * self.stratify_ratio['winning'])
-        n_losing = int(batch_size * self.stratify_ratio['losing'])
-        n_neutral = batch_size - n_winning - n_losing
-
-        sampled_indices = []
-
-        # Sample winning
-        if len(self.winning_indices) > 0:
-            winning_weights = weights[self.winning_indices]
-            winning_weights = winning_weights / winning_weights.sum()
-            n_sample = min(n_winning, len(self.winning_indices))
-            sampled_winning = np.random.choice(
-                self.winning_indices,
-                size=n_sample,
-                replace=False,
-                p=winning_weights
+            batch_size = self.size
+        
+        # Utiliser les indices de stratification déjà maintenus (mis à jour dans push())
+        winning_indices = [i for i in self.winning_indices if i < self.size]
+        losing_indices = [i for i in self.losing_indices if i < self.size]
+        neutral_indices = [i for i in self.neutral_indices if i < self.size]
+        
+        # Calculer combien de chaque type on veut
+        target_win = int(batch_size * 0.40)
+        target_lose = int(batch_size * 0.40)
+        target_neutral = batch_size - target_win - target_lose  # Le reste (20%)
+        
+        # Sample de chaque catégorie (avec replacement si pas assez)
+        selected_indices = []
+        
+        if len(winning_indices) > 0:
+            replace = len(winning_indices) < target_win
+            selected_indices.extend(
+                np.random.choice(winning_indices, target_win, replace=replace).tolist()
             )
-            sampled_indices.extend(sampled_winning)
-
-        # Sample losing
-        if len(self.losing_indices) > 0:
-            losing_weights = weights[self.losing_indices]
-            losing_weights = losing_weights / losing_weights.sum()
-            n_sample = min(n_losing, len(self.losing_indices))
-            sampled_losing = np.random.choice(
-                self.losing_indices,
-                size=n_sample,
-                replace=False,
-                p=losing_weights
+        else:
+            # Pas de winning transitions, prendre des neutral à la place
+            target_neutral += target_win
+        
+        if len(losing_indices) > 0:
+            replace = len(losing_indices) < target_lose
+            selected_indices.extend(
+                np.random.choice(losing_indices, target_lose, replace=replace).tolist()
             )
-            sampled_indices.extend(sampled_losing)
-
-        # Sample neutral
-        if len(self.neutral_indices) > 0:
-            neutral_weights = weights[self.neutral_indices]
-            neutral_weights = neutral_weights / neutral_weights.sum()
-            n_sample = min(n_neutral, len(self.neutral_indices))
-            sampled_neutral = np.random.choice(
-                self.neutral_indices,
-                size=n_sample,
-                replace=False,
-                p=neutral_weights
+        else:
+            # Pas de losing transitions, prendre des neutral à la place
+            target_neutral += target_lose
+        
+        if len(neutral_indices) > 0:
+            replace = len(neutral_indices) < target_neutral
+            selected_indices.extend(
+                np.random.choice(neutral_indices, target_neutral, replace=replace).tolist()
             )
-            sampled_indices.extend(sampled_neutral)
-
-        # If not enough samples, fill with random weighted sampling
-        if len(sampled_indices) < batch_size:
-            remaining = batch_size - len(sampled_indices)
-            all_indices = np.arange(self.size)
-            available_mask = np.ones(self.size, dtype=bool)
-            available_mask[sampled_indices] = False
-            available_indices = all_indices[available_mask]
-
-            if len(available_indices) > 0:
-                available_weights = weights[available_indices]
-                available_weights = available_weights / available_weights.sum()
-                n_sample = min(remaining, len(available_indices))
-                additional = np.random.choice(
-                    available_indices,
-                    size=n_sample,
-                    replace=False,
-                    p=available_weights
-                )
-                sampled_indices.extend(additional)
-
-        # Convert to numpy array for vectorized indexing
-        sampled_indices = np.array(sampled_indices, dtype=np.int32)
-
-        # Vectorized data extraction
+        
+        # Si on n'a pas assez de samples au total, compléter avec random uniform
+        while len(selected_indices) < batch_size:
+            selected_indices.append(np.random.randint(0, self.size))
+        
+        # Shuffle pour éviter les patterns
+        np.random.shuffle(selected_indices)
+        
+        # Extraire les transitions depuis les arrays numpy
+        selected_indices = np.array(selected_indices, dtype=np.int32)
+        
+        states = self.states[selected_indices]
+        actions = self.actions[selected_indices]
+        rewards = self.rewards[selected_indices]
+        next_states = self.next_states[selected_indices]
+        dones = self.dones[selected_indices]
+        
+        # ✅ RETOURNER UN DICTIONNAIRE au lieu d'un tuple
         return {
-            'states': self.states[sampled_indices],
-            'actions': self.actions[sampled_indices],
-            'rewards': self.rewards[sampled_indices],
-            'next_states': self.next_states[sampled_indices],
-            'dones': self.dones[sampled_indices]
+            'states': states,
+            'actions': actions,
+            'rewards': rewards,
+            'next_states': next_states,
+            'dones': dones
         }
     
     def trim_old(self, keep_percentage: float = 0.7):
@@ -714,7 +698,7 @@ class SACAgent:
         self.reward_count = 0
 
         # Mixed precision training
-        self.use_amp = torch.cuda.is_available()
+        self.use_amp = False 
         self.scaler = torch.cuda.amp.GradScaler() if self.use_amp else None
 
         # Pre-allocated pinned memory tensors for faster CPU->GPU transfer
@@ -851,10 +835,36 @@ class SACAgent:
         critic_metrics = self._update_critics(
             states, actions, rewards, next_states, dones, regime
         )
-
+        
+        # ✅ AJOUTER ICI - Early stopping pour gradients explosifs
+        if critic_metrics['critic_grad_norm'] > 50.0:
+            logger.warning(
+                f"⚠️ Critic gradient explosion! "
+                f"Norm={critic_metrics['critic_grad_norm']:.2f}. "
+                f"Skipping this update."
+            )
+            return None
+        
+        if np.isnan(critic_metrics['critic_grad_norm']) or np.isinf(critic_metrics['critic_grad_norm']):
+            logger.error("❌ NaN/Inf in critic gradients! Skipping update.")
+            return None
+        
         # Update actor
         actor_metrics = self._update_actor(states, regime)
-
+        
+        # ✅ AJOUTER ICI - Early stopping pour actor aussi
+        if actor_metrics['actor_grad_norm'] > 50.0:
+            logger.warning(
+                f"⚠️ Actor gradient explosion! "
+                f"Norm={actor_metrics['actor_grad_norm']:.2f}. "
+                f"Skipping this update."
+            )
+            return None
+        
+        if np.isnan(actor_metrics['actor_grad_norm']) or np.isinf(actor_metrics['actor_grad_norm']):
+            logger.error("❌ NaN/Inf in actor gradients! Skipping update.")
+            return None
+        
         # Update target networks
         self._soft_update_targets()
 
@@ -1067,8 +1077,10 @@ class SACAgent:
             critic_grad_norm = critic_grad_norm ** 0.5
 
             torch.nn.utils.clip_grad_norm_(
-                self.critic1.parameters() if not self.config.use_regime_qfuncs else
-                list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()),
+                list(self.critic1.parameters()) + list(self.critic2.parameters())
+                if not self.config.use_regime_qfuncs else
+                list(self.critic1_low.parameters()) + list(self.critic1_high.parameters()) +
+                list(self.critic2_low.parameters()) + list(self.critic2_high.parameters()),
                 self.config.max_grad_norm
             )
             self.critic_optimizer.step()
@@ -1179,7 +1191,7 @@ class SACAgent:
 
             # AJOUT: Clamper log_alpha pour éviter l'effondrement d'entropie
             # Empêche alpha de tomber à 0 (ce qui causerait une politique déterministe)
-            self.log_alpha.data.clamp_(min=-5.0, max=1.0)  # exp(-5) ≈ 0.0067, exp(1) ≈ 2.718
+            self.log_alpha.data.clamp_(min=-1.5, max=1.0)  # exp(-5) ≈ 0.0067, exp(1) ≈ 2.718
             self.alpha = self.log_alpha.exp()
 
             # Forcer un alpha minimum si besoin

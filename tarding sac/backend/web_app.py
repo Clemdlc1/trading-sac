@@ -1017,7 +1017,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             transitions_log.clear()
 
             # Logger les transitions seulement pour les épisodes qui seront sauvegardés (optimisation performance)
-            should_log_transitions = (episode % 100 == 0 and episode > 0)
+            should_log_transitions = (episode % 5 == 0 and episode > 0)
 
             if system_state.stop_event.is_set():
                 logger.info("Arrêt manuel détecté, sauvegarde des agents...")

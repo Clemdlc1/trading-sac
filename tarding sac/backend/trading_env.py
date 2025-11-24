@@ -74,11 +74,11 @@ class TradingEnvConfig:
     no_trading_warmup_steps: int = 10000  # First 10k steps: ZERO trading, buffer filling phase
     
     # Reward function parameters
-    dense_weight: float = 0.70  # INCREASED from 0.40 - more immediate feedback
-    terminal_weight: float = 0.30  # DECREASED from 0.60 - less delayed signal
+    dense_weight: float = 0.90  # INCREASED from 0.40 - more immediate feedback
+    terminal_weight: float = 0.10  # DECREASED from 0.60 - less delayed signal
 
     # Reward scaling to improve learning signal
-    reward_scale: float = 10.0  # Scale up rewards for better gradients
+    reward_scale: float = 1.0  # Scale up rewards for better gradients
 
     # DSR parameters (Differential Sharpe Ratio)
     dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation
@@ -326,12 +326,7 @@ class RewardCalculator:
                 log_return = 0.0
 
             # Reward simple : rendement pur
-            dense_reward = log_return * 100.0  # Scale up pour que ce soit ~1.0
-
-            # Petit penalty de maintien de position (pour éviter l'inertie)
-            # Mais pas de penalty "downside" complexe pour l'instant
-            if position_change > 0:
-                dense_reward -= position_change * 0.001  # Très petit penalty
+            dense_reward = log_return * 10.0  # Scale up pour que ce soit ~1.0
 
             return dense_reward
 
