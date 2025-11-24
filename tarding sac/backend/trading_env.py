@@ -522,22 +522,36 @@ class TradingEnvironment(gym.Env):
     ):
         """
         Initialize trading environment.
-        
+
         Args:
-            data: OHLC data (EUR/USD)
-            features: Normalized features (30 features)
+            data: OHLC data (EUR/USD) - should contain raw_close for precise PnL
+            features: Normalized features (30 features) - contains raw_close hidden column
             config: Environment configuration
             eval_mode: If True, use sequential episodes (no random start)
         """
         super().__init__()
-        
+
         self.config = config or TradingEnvConfig()
         self.eval_mode = eval_mode
-        
+
         # Data
         self.data = data.reset_index(drop=True)
         self.features = features.reset_index(drop=True)
         self.total_steps = len(self.data)
+
+        # Extract hidden columns for precise calculations
+        # These are NOT visible to the agent (not in observation space)
+        if 'raw_close' in self.features.columns:
+            self.raw_close = self.features['raw_close'].values
+            logger.info("Using raw_close for precise PnL calculations")
+        else:
+            # Fallback to normalized close if raw_close not available
+            self.raw_close = self.data['close'].values
+            logger.warning("raw_close not found, using normalized close (less precise)")
+
+        # Remove hidden columns from features (agent must not see them)
+        hidden_columns = ['raw_close', 'timestamp']
+        self.features = self.features.drop(columns=[col for col in hidden_columns if col in self.features.columns])
         
         # Gym spaces
         self.observation_space = spaces.Box(
@@ -659,10 +673,11 @@ class TradingEnvironment(gym.Env):
         # Convert action to scalar
         action = float(action[0])
         action = np.clip(action, self.config.action_min, self.config.action_max)
-        
+
         # Get current state
         idx = self.episode_start + self.current_step
-        current_price = self.data.iloc[idx]['close']
+        # IMPORTANT: Use raw_close for precise PnL calculations (non-normalized)
+        current_price = self.raw_close[idx]
         current_high = self.data.iloc[idx]['high']
         current_low = self.data.iloc[idx]['low']
         timestamp = self.data.iloc[idx]['timestamp']
@@ -854,17 +869,22 @@ class TradingEnvironment(gym.Env):
         return obs, total_reward, done, info
     
     def _get_observation(self) -> np.ndarray:
-        """Get current observation (features)."""
+        """
+        Get current observation (features).
+
+        IMPORTANT: Returns only the 30 normalized features.
+        Hidden columns (raw_close, timestamp) are NOT included in observations.
+        """
         idx = self.episode_start + self.current_step
-        
+
         if idx >= len(self.features):
             idx = len(self.features) - 1
-        
+
         obs = self.features.iloc[idx].values.astype(np.float32)
-        
+
         # Clip to observation space bounds
         obs = np.clip(obs, self.config.obs_min, self.config.obs_max)
-        
+
         return obs
     
     def _calculate_atr(self, idx: int, period: int = 14) -> float:

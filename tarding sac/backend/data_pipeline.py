@@ -853,26 +853,28 @@ class DataPersistence:
     ) -> Path:
         """
         Save all processed data to HDF5 file.
-        
+
         Structure:
         /train/<pair>/
         /val/<pair>/
         /test/<pair>/
         /metadata/
-        
+
+        IMPORTANT: Includes raw_close (non-normalized price) for precise PnL calculations
+
         Args:
             train_data: Training data dictionary
             val_data: Validation data dictionary
             test_data: Test data dictionary
             filename: Output filename
-            
+
         Returns:
             Path to saved file
         """
         output_path = self.config.processed_data_dir / filename
-        
+
         logger.info(f"Saving processed data to {output_path}")
-        
+
         with h5py.File(output_path, 'w') as f:
             # Save training data
             train_grp = f.create_group('train')
@@ -883,7 +885,9 @@ class DataPersistence:
                 pair_grp.create_dataset('high', data=df['high'].values)
                 pair_grp.create_dataset('low', data=df['low'].values)
                 pair_grp.create_dataset('close', data=df['close'].values)
-            
+                # Hidden columns for precise calculations (not features)
+                pair_grp.create_dataset('raw_close', data=df['close'].values)  # Non-normalized price
+
             # Save validation data
             val_grp = f.create_group('val')
             for pair, df in val_data.items():
@@ -893,7 +897,9 @@ class DataPersistence:
                 pair_grp.create_dataset('high', data=df['high'].values)
                 pair_grp.create_dataset('low', data=df['low'].values)
                 pair_grp.create_dataset('close', data=df['close'].values)
-            
+                # Hidden columns for precise calculations (not features)
+                pair_grp.create_dataset('raw_close', data=df['close'].values)  # Non-normalized price
+
             # Save test data
             test_grp = f.create_group('test')
             for pair, df in test_data.items():
@@ -903,6 +909,8 @@ class DataPersistence:
                 pair_grp.create_dataset('high', data=df['high'].values)
                 pair_grp.create_dataset('low', data=df['low'].values)
                 pair_grp.create_dataset('close', data=df['close'].values)
+                # Hidden columns for precise calculations (not features)
+                pair_grp.create_dataset('raw_close', data=df['close'].values)  # Non-normalized price
             
             # Save metadata
             meta_grp = f.create_group('metadata')
@@ -921,63 +929,83 @@ class DataPersistence:
     def load_from_hdf5(self, filename: str = "processed_data.h5") -> Tuple[Dict, Dict, Dict]:
         """
         Load processed data from HDF5 file.
-        
+
+        IMPORTANT: Loads raw_close (non-normalized price) for precise PnL calculations
+
         Args:
             filename: Input filename
-            
+
         Returns:
             Tuple of (train_data, val_data, test_data)
         """
         input_path = self.config.processed_data_dir / filename
-        
+
         if not input_path.exists():
             raise FileNotFoundError(f"Data file not found: {input_path}")
-        
+
         logger.info(f"Loading processed data from {input_path}")
-        
+
         train_data = {}
         val_data = {}
         test_data = {}
-        
+
         with h5py.File(input_path, 'r') as f:
             # Load training data
             for pair in f['train'].keys():
                 pair_grp = f['train'][pair]
-                train_data[pair] = pd.DataFrame({
+                df_dict = {
                     'timestamp': pd.to_datetime(pair_grp['timestamp'][:], unit='s'),
                     'open': pair_grp['open'][:],
                     'high': pair_grp['high'][:],
                     'low': pair_grp['low'][:],
                     'close': pair_grp['close'][:]
-                })
-            
+                }
+                # Load raw_close if available (for backward compatibility)
+                if 'raw_close' in pair_grp:
+                    df_dict['raw_close'] = pair_grp['raw_close'][:]
+                else:
+                    df_dict['raw_close'] = pair_grp['close'][:]  # Fallback
+                train_data[pair] = pd.DataFrame(df_dict)
+
             # Load validation data
             for pair in f['val'].keys():
                 pair_grp = f['val'][pair]
-                val_data[pair] = pd.DataFrame({
+                df_dict = {
                     'timestamp': pd.to_datetime(pair_grp['timestamp'][:], unit='s'),
                     'open': pair_grp['open'][:],
                     'high': pair_grp['high'][:],
                     'low': pair_grp['low'][:],
                     'close': pair_grp['close'][:]
-                })
-            
+                }
+                # Load raw_close if available (for backward compatibility)
+                if 'raw_close' in pair_grp:
+                    df_dict['raw_close'] = pair_grp['raw_close'][:]
+                else:
+                    df_dict['raw_close'] = pair_grp['close'][:]  # Fallback
+                val_data[pair] = pd.DataFrame(df_dict)
+
             # Load test data
             for pair in f['test'].keys():
                 pair_grp = f['test'][pair]
-                test_data[pair] = pd.DataFrame({
+                df_dict = {
                     'timestamp': pd.to_datetime(pair_grp['timestamp'][:], unit='s'),
                     'open': pair_grp['open'][:],
                     'high': pair_grp['high'][:],
                     'low': pair_grp['low'][:],
                     'close': pair_grp['close'][:]
-                })
-            
+                }
+                # Load raw_close if available (for backward compatibility)
+                if 'raw_close' in pair_grp:
+                    df_dict['raw_close'] = pair_grp['raw_close'][:]
+                else:
+                    df_dict['raw_close'] = pair_grp['close'][:]  # Fallback
+                test_data[pair] = pd.DataFrame(df_dict)
+
             # Log metadata
             meta = f['metadata'].attrs
             logger.info(f"Data created at: {meta['created_at']}")
             logger.info(f"Pairs: {list(meta['pairs'])}")
-        
+
         logger.info("Successfully loaded data")
         return train_data, val_data, test_data
 
