@@ -49,8 +49,8 @@ class FeatureConfig:
     dxy_features: int = 4  # Reduced from 5 (removed corr_eurusd_dxy_60d)
     cross_features: int = 6
     risk_features: int = 2
-    temporal_features: int = 7
-    total_features: int = 29  # Reduced from 30
+    temporal_features: int = 8  # Increased from 7 to match expected 30 features
+    total_features: int = 30  # 10 + 4 + 6 + 2 + 8 = 30
     
     # Technical indicator parameters
     rsi_period: int = 14
@@ -62,9 +62,9 @@ class FeatureConfig:
     bb_std: float = 2.0
     correlation_period: int = 60  # days for correlation (60 days * 288 bars/day)
     
-    # Normalization parameters - increased range to reduce clipping probability
-    clip_min: float = -15.0  # Increased from -10.0
-    clip_max: float = 15.0   # Increased from 10.0
+    # Normalization parameters
+    clip_min: float = -10.0
+    clip_max: float = 10.0
     epsilon: float = 1e-8
     
     # DXY synthetic index weights (from spec)
@@ -518,6 +518,9 @@ class FeatureEngineer:
         # Asian session: 23:00-09:00 UTC (10 hours = 41.7% of day, wraps midnight)
         features['session_asian'] = ((hours >= 23) | (hours < 9)).astype(float)
 
+        # Weekend indicator (Saturday=5, Sunday=6)
+        features['is_weekend'] = (days >= 5).astype(float)
+
         return features
     
     def calculate_all_features(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -590,21 +593,20 @@ class FeatureEngineer:
         # Features that should NOT be normalized
         non_normalized_features = [
             'rsi_14', 'dxy_rsi_14', 'usdjpy_rsi_14', 'eurgbp_rsi_14', 'eurjpy_rsi_14',
-            'session_european', 'session_us', 'session_asian'
+            'session_european', 'session_us', 'session_asian', 'is_weekend'
         ]
 
-        # Increased min_periods to 1000 bars for very stable warmup
-        # This prevents the constant 0 values on first 100-1000 data points
-        warmup_period = 1000  # ~3.5 days of 5-minute bars
+        # No warmup period - we'll remove first 1000 values at split level instead
+        min_periods = 1
 
         for col in features.columns:
             if col in non_normalized_features:
                 # These are already in [0, 1] range or binary
                 normalized[col] = features[col]
             else:
-                # Calculate expanding mean and std with longer warmup
-                expanding_mean = features[col].expanding(min_periods=warmup_period).mean()
-                expanding_std = features[col].expanding(min_periods=warmup_period).std()
+                # Calculate expanding mean and std
+                expanding_mean = features[col].expanding(min_periods=min_periods).mean()
+                expanding_std = features[col].expanding(min_periods=min_periods).std()
 
                 # Shift to avoid using current value in normalization
                 expanding_mean = expanding_mean.shift(1)
@@ -619,11 +621,10 @@ class FeatureEngineer:
                     upper=self.config.clip_max
                 )
 
-                # Better warmup handling: use forward fill for first few values, then 0
-                # This creates smoother transition and avoids constant 0 plateau
-                normalized[col] = normalized_values.fillna(method='ffill', limit=10).fillna(0.0)
+                # Fill NaN values
+                normalized[col] = normalized_values.fillna(0.0)
 
-        logger.info(f"Normalization complete (warmup period: {warmup_period} bars = ~1 day)")
+        logger.info("Normalization complete (no warmup period - first 1000 samples will be removed at split)")
         return normalized
     
     def validate_features(self, features: pd.DataFrame) -> Dict[str, any]:
