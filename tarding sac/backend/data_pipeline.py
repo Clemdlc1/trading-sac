@@ -80,6 +80,12 @@ class DataConfig:
     val_end: str = "2023-12-31"
     test_start: str = "2024-01-01"
     test_end: str = "2025-01-31"
+
+    # Corrupted data periods to exclude (format: list of tuples with start and end dates)
+    # Based on analysis of oscillating US session data corruption
+    exclude_periods: List[Tuple[str, str]] = field(default_factory=lambda: [
+        # Add corrupted periods here - example: ("2023-06-01", "2023-06-15")
+    ])
     
     # Aggregation parameters
     source_timeframe: str = "1min"
@@ -792,49 +798,99 @@ class DataSplitter:
     def __init__(self, config: DataConfig):
         self.config = config
     
+    def _exclude_corrupted_periods(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Exclude corrupted data periods from DataFrame.
+
+        Args:
+            df: DataFrame with timestamp column
+
+        Returns:
+            DataFrame with corrupted periods removed
+        """
+        if not self.config.exclude_periods:
+            return df
+
+        df = df.copy()
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+        for start_date, end_date in self.config.exclude_periods:
+            exclude_start = pd.to_datetime(start_date)
+            exclude_end = pd.to_datetime(end_date)
+
+            exclude_mask = (df['timestamp'] >= exclude_start) & (df['timestamp'] <= exclude_end)
+            n_excluded = exclude_mask.sum()
+
+            if n_excluded > 0:
+                logger.info(f"  Excluding corrupted period {start_date} to {end_date}: {n_excluded} rows")
+                df = df[~exclude_mask]
+
+        return df
+
     def split_data(self, data_dict: Dict[str, pd.DataFrame]) -> Tuple[Dict, Dict, Dict]:
         """
         Split data according to configured date ranges.
-        
-        Train: 2011-01-01 → 2023-12-31 (13 years)
-        Validation: 2019-01-01 → 2023-12-31 (5 years, intentional overlap)
+
+        Train: 2012-01-01 → 2023-12-31
+        Validation: 2019-01-01 → 2023-12-31 (intentional overlap)
         Test: 2024-01-01 → 2025-01-31 (OOS, never touched)
-        
+
+        Corrupted periods are automatically excluded.
+        First 1000 rows of each split are removed to avoid warmup artifacts.
+
         Args:
             data_dict: Dictionary of aligned DataFrames
-            
+
         Returns:
             Tuple of (train_dict, val_dict, test_dict)
         """
         train_data = {}
         val_data = {}
         test_data = {}
-        
+
         train_start = pd.to_datetime(self.config.train_start)
         train_end = pd.to_datetime(self.config.train_end)
         val_start = pd.to_datetime(self.config.val_start)
         val_end = pd.to_datetime(self.config.val_end)
         test_start = pd.to_datetime(self.config.test_start)
         test_end = pd.to_datetime(self.config.test_end)
-        
+
         for pair, df in data_dict.items():
             df['timestamp'] = pd.to_datetime(df['timestamp'])
-            
-            # Train split
+
+            # Exclude corrupted periods first
+            df = self._exclude_corrupted_periods(df)
+
+            # Train split - remove first 1000 rows to avoid warmup period
             train_mask = (df['timestamp'] >= train_start) & (df['timestamp'] <= train_end)
-            train_data[pair] = df[train_mask].copy()
-            
-            # Validation split
+            train_df = df[train_mask].copy()
+            if len(train_df) > 1000:
+                train_data[pair] = train_df.iloc[1000:].reset_index(drop=True)
+                logger.info(f"{pair} train: removed first 1000 rows (warmup)")
+            else:
+                train_data[pair] = train_df
+
+            # Validation split - remove first 1000 rows to avoid warmup period
             val_mask = (df['timestamp'] >= val_start) & (df['timestamp'] <= val_end)
-            val_data[pair] = df[val_mask].copy()
-            
-            # Test split
+            val_df = df[val_mask].copy()
+            if len(val_df) > 1000:
+                val_data[pair] = val_df.iloc[1000:].reset_index(drop=True)
+                logger.info(f"{pair} val: removed first 1000 rows (warmup)")
+            else:
+                val_data[pair] = val_df
+
+            # Test split - remove first 1000 rows to avoid warmup period
             test_mask = (df['timestamp'] >= test_start) & (df['timestamp'] <= test_end)
-            test_data[pair] = df[test_mask].copy()
-            
+            test_df = df[test_mask].copy()
+            if len(test_df) > 1000:
+                test_data[pair] = test_df.iloc[1000:].reset_index(drop=True)
+                logger.info(f"{pair} test: removed first 1000 rows (warmup)")
+            else:
+                test_data[pair] = test_df
+
             logger.info(f"{pair} split: train={len(train_data[pair])}, "
                        f"val={len(val_data[pair])}, test={len(test_data[pair])}")
-        
+
         return train_data, val_data, test_data
 
 
