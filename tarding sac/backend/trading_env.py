@@ -45,8 +45,8 @@ class TradingEnvConfig:
     # Initial capital - MASSIVE account for resilience
     initial_capital: float = 500000.0  # $500k (5× more resilient!)
 
-    # Position sizing - ULTRA CONSERVATIVE: 2× leverage, 0.05% risk
-    risk_per_trade: float = 0.0005  # 0.05% per trade (4× safer than before!)
+    # Position sizing - ULTRA CONSERVATIVE: 2× leverage, 0.1% risk
+    risk_per_trade: float = 0.001  # 0.1% risk per trade (halved from 0.2%)
     max_leverage: float = 2.0  # 2× maximum - extremely safe
     min_position_size: float = 0.01  # Minimum lot size
 
@@ -71,7 +71,7 @@ class TradingEnvConfig:
     # Learning phases
     # REDUCED from 20000 to 5000 to match SAC warmup_steps and reduce bias from forced actions
     # During warmup: actions forced to 0, buffer fills, but networks don't update
-    no_trading_warmup_steps: int = 10000  # First 10k steps: ZERO trading, buffer filling phase
+    no_trading_warmup_steps: int = 9000  # First 10k steps: ZERO trading, buffer filling phase
     
     # Reward function parameters
     dense_weight: float = 0.90  # INCREASED from 0.40 - more immediate feedback
@@ -87,7 +87,7 @@ class TradingEnvConfig:
     use_simple_reward: bool = True  # True = PnL pur, False = récompense complexe
     
     # Observation space
-    n_features: int = 31  # 30 technical features + 1 position feature
+    n_features: int = 30  # 29 technical features + 1 position feature
     obs_min: float = -10.0
     obs_max: float = 10.0
 
@@ -95,7 +95,7 @@ class TradingEnvConfig:
     # 1. No position reinforcement: long positions reject positive actions, shorts reject negative
     # 2. No immediate reopening: closing a position keeps agent flat until next step
     # 3. Minimum entry threshold: require |action| >= 0.2 to enter from flat
-    min_entry_threshold: float = 0.2  # Minimum action strength to enter position when flat
+    min_entry_threshold: float = 0.1  # Minimum action strength to enter position when flat
 
     # Action space
     action_min: float = -1.0

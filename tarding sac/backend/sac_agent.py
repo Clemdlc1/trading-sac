@@ -53,7 +53,7 @@ class SACConfig:
     """Configuration for SAC agent."""
 
     # Network architecture
-    state_dim: int = 31  # 30 technical features + 1 position feature
+    state_dim: int = 30  # 29 technical features + 1 position feature
     action_dim: int = 1
     hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
 
@@ -72,12 +72,12 @@ class SACConfig:
     # Replay buffer
     buffer_capacity: int = 100000
     batch_size: int = 1024
-    warmup_steps: int = 10000  # INCREASED from 1000 - agent needs MORE exploration before learning
+    warmup_steps: int = 9000  # INCREASED from 1000 - agent needs MORE exploration before learning
 
     # Adaptive batch sizing
     use_adaptive_batch: bool = False
     min_batch_size: int = 256  # Minimum batch size for very early training
-    adaptive_batch_threshold: int = 10000  # Buffer size to reach full batch_size
+    adaptive_batch_threshold: int = 9000  # Buffer size to reach full batch_size
 
     # Regularization
     weight_decay: float = 1e-3
@@ -86,8 +86,8 @@ class SACConfig:
 
     # Entropy tuning
     auto_entropy_tuning: bool = True
-    target_entropy: float = -0.5  # CORRIGÉ: -dim(action) pour actions continues (était 0.3)
-    min_alpha: float = 0.1  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
+    target_entropy: float = -0.5  # -dim(A)/2 = -0.5 for 1D action space
+    min_alpha: float = 0.15  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
     use_adaptive_entropy: bool = False  # Gradually reduce target entropy over training
     entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
 
@@ -105,7 +105,7 @@ class SACConfig:
 
     # HMM support (for Agent 3)
     use_regime_qfuncs: bool = False
-    state_dim_with_regime: int = 33  # 31 + 2 regime features
+    state_dim_with_regime: int = 31  # 29 + 2 regime features
     
     # Checkpointing
     models_dir: Path = Path("models/checkpoints")
@@ -302,7 +302,7 @@ class ReplayBuffer:
         capacity: int = 100000,
         recency_weight: float = 0.00005,
         stratify_ratio: Dict[str, float] = None,
-        state_dim: int = 31,  # 30 technical features + 1 position feature
+        state_dim: int = 30,  # 29 technical features + 1 position feature
         action_dim: int = 1
     ):
         self.capacity = capacity
@@ -1180,18 +1180,18 @@ class SACAgent:
 
             if self.use_amp:
                 with torch.cuda.amp.autocast():
-                    alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+                    alpha_loss = (self.log_alpha.exp() * (log_probs + self.target_entropy).detach()).mean()
 
                 self.scaler.scale(alpha_loss).backward()
                 self.scaler.step(self.alpha_optimizer)
             else:
-                alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+                alpha_loss = (self.log_alpha.exp() * (log_probs + self.target_entropy).detach()).mean()
                 alpha_loss.backward()
                 self.alpha_optimizer.step()
 
             # AJOUT: Clamper log_alpha pour éviter l'effondrement d'entropie
             # Empêche alpha de tomber à 0 (ce qui causerait une politique déterministe)
-            self.log_alpha.data.clamp_(min=-1.5, max=1.0)  # exp(-5) ≈ 0.0067, exp(1) ≈ 2.718
+            self.log_alpha.data.clamp_(min=-3.0, max=2.0)  # exp(-5) ≈ 0.0067, exp(1) ≈ 2.718
             self.alpha = self.log_alpha.exp()
 
             # Forcer un alpha minimum si besoin
@@ -1402,7 +1402,7 @@ def main():
     # Create agent
     logger.info("Creating SAC agent...")
     sac_config = SACConfig(
-        state_dim=31,  # 30 technical features + 1 position feature
+        state_dim=30,  # 29 technical features + 1 position feature
         action_dim=1,
         gamma=0.95,
         hidden_dims=[256, 256]

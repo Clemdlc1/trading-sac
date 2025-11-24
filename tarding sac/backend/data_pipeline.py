@@ -85,6 +85,7 @@ class DataConfig:
     # Based on analysis of oscillating US session data corruption
     exclude_periods: List[Tuple[str, str]] = field(default_factory=lambda: [
         # Add corrupted periods here - example: ("2023-06-01", "2023-06-15")
+        ("2023-02-16", "2023-07-31"),
     ])
     
     # Aggregation parameters

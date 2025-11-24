@@ -46,11 +46,11 @@ class FeatureConfig:
     
     # Feature groups
     eurusd_features: int = 10
-    dxy_features: int = 4  # Reduced from 5 (removed corr_eurusd_dxy_60d)
+    dxy_features: int = 4
     cross_features: int = 6
     risk_features: int = 2
-    temporal_features: int = 8  # Increased from 7 to match expected 30 features
-    total_features: int = 30  # 10 + 4 + 6 + 2 + 8 = 30
+    temporal_features: int = 7  # Increased from 7 to match expected 30 features
+    total_features: int = 29  # 10 + 4 + 6 + 2 + 7 = 29
     
     # Technical indicator parameters
     rsi_period: int = 14
@@ -518,9 +518,6 @@ class FeatureEngineer:
         # Asian session: 23:00-09:00 UTC (10 hours = 41.7% of day, wraps midnight)
         features['session_asian'] = ((hours >= 23) | (hours < 9)).astype(float)
 
-        # Weekend indicator (Saturday=5, Sunday=6)
-        features['is_weekend'] = (days >= 5).astype(float)
-
         return features
     
     def calculate_all_features(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -593,7 +590,7 @@ class FeatureEngineer:
         # Features that should NOT be normalized
         non_normalized_features = [
             'rsi_14', 'dxy_rsi_14', 'usdjpy_rsi_14', 'eurgbp_rsi_14', 'eurjpy_rsi_14',
-            'session_european', 'session_us', 'session_asian', 'is_weekend'
+            'session_european', 'session_us', 'session_asian'
         ]
 
         # No warmup period - we'll remove first 1000 values at split level instead
