@@ -46,11 +46,11 @@ class FeatureConfig:
     
     # Feature groups
     eurusd_features: int = 10
-    dxy_features: int = 5
+    dxy_features: int = 4  # Reduced from 5 (removed corr_eurusd_dxy_60d)
     cross_features: int = 6
     risk_features: int = 2
     temporal_features: int = 7
-    total_features: int = 30
+    total_features: int = 29  # Reduced from 30
     
     # Technical indicator parameters
     rsi_period: int = 14
@@ -62,9 +62,9 @@ class FeatureConfig:
     bb_std: float = 2.0
     correlation_period: int = 60  # days for correlation (60 days * 288 bars/day)
     
-    # Normalization parameters
-    clip_min: float = -10.0
-    clip_max: float = 10.0
+    # Normalization parameters - increased range to reduce clipping probability
+    clip_min: float = -15.0  # Increased from -10.0
+    clip_max: float = 15.0   # Increased from 10.0
     epsilon: float = 1e-8
     
     # DXY synthetic index weights (from spec)
@@ -344,49 +344,40 @@ class FeatureEngineer:
     
     def calculate_dxy_features(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         """
-        Calculate DXY synthetic index features (Group 2: 5 features).
-        
+        Calculate DXY synthetic index features (Group 2: 4 features).
+
+        NOTE: Removed corr_eurusd_dxy_60d feature (was causing noise).
+
         Args:
             data_dict: Dictionary of DataFrames for all pairs
-            
+
         Returns:
             DataFrame with DXY features
         """
         logger.info("Calculating DXY features...")
-        
+
         # Calculate DXY index
         dxy = self.dxy_calculator.calculate_dxy(data_dict)
-        
+
         # Create DataFrame for DXY features
         features = pd.DataFrame(index=dxy.index)
-        
+
         # DXY returns (2 features)
         features['dxy_return_1h'] = self.tech_indicators.calculate_returns(dxy, periods=12)
         features['dxy_return_4h'] = self.tech_indicators.calculate_returns(dxy, periods=48)
-        
+
         # DXY RSI (1 feature)
         features['dxy_rsi_14'] = self.tech_indicators.calculate_rsi(dxy, period=14)
-        
+
         # DXY ATR (1 feature)
         # For DXY, we'll approximate high/low using price variations
         dxy_high = dxy * 1.001  # Approximate
         dxy_low = dxy * 0.999
         atr = self.tech_indicators.calculate_atr(dxy_high, dxy_low, dxy, period=14)
         features['dxy_atr_14'] = atr / (dxy.shift(1) + 1e-8)
-        
-        # EUR/USD vs DXY correlation (1 feature)
-        eurusd_close = data_dict['EURUSD']['close']
-        
-        # Calculate rolling correlation with proper shifting to avoid look-ahead
-        eurusd_shifted = eurusd_close.shift(1)
-        dxy_shifted = dxy.shift(1)
-        
-        # Rolling correlation over 60 days (60 * 288 bars)
-        correlation_window = 60 * 288
-        features['corr_eurusd_dxy_60d'] = eurusd_shifted.rolling(
-            window=correlation_window, min_periods=correlation_window//2
-        ).corr(dxy_shifted)
-        
+
+        # NOTE: Removed corr_eurusd_dxy_60d - was creating noise in the data
+
         return features
     
     def calculate_cross_pair_features(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -477,41 +468,56 @@ class FeatureEngineer:
     def calculate_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calculate temporal features (Group 5: 7 features).
-        
+
         Uses cyclical encoding for continuous time representation.
-        
+
+        IMPORTANT: Timestamps MUST be in UTC timezone.
+
         Args:
-            df: DataFrame with timestamp index
-            
+            df: DataFrame with timestamp column (UTC timezone)
+
         Returns:
             DataFrame with temporal features
         """
         logger.info("Calculating temporal features...")
-        
+
         features = pd.DataFrame(index=df.index)
-        
-        # Extract time components
-        hours = df['timestamp'].dt.hour
-        days = df['timestamp'].dt.dayofweek  # 0=Monday, 6=Sunday
-        
+
+        # Ensure timestamp is datetime and localize to UTC if needed
+        timestamps = pd.to_datetime(df['timestamp'])
+        if timestamps.dt.tz is None:
+            # If no timezone, assume UTC (as data_pipeline converts EST to UTC)
+            timestamps = timestamps.dt.tz_localize('UTC')
+        else:
+            # Convert to UTC if in different timezone
+            timestamps = timestamps.dt.tz_convert('UTC')
+
+        # Extract time components from UTC timestamps
+        hours = timestamps.dt.hour
+        days = timestamps.dt.dayofweek  # 0=Monday, 6=Sunday
+
+        # Validation: check session_us coverage
+        session_us_pct = ((hours >= 13) & (hours < 22)).sum() / len(hours) * 100
+        logger.info(f"Session US coverage: {session_us_pct:.1f}% of data (expected ~37.5%)")
+
         # Cyclical encoding for hours (24-hour cycle)
         features['hour_sin'] = np.sin(2 * np.pi * hours / 24)
         features['hour_cos'] = np.cos(2 * np.pi * hours / 24)
-        
+
         # Cyclical encoding for days (7-day cycle)
         features['day_sin'] = np.sin(2 * np.pi * days / 7)
         features['day_cos'] = np.cos(2 * np.pi * days / 7)
-        
+
         # Trading session indicators (binary)
-        # European session: 07:00-16:00 UTC
+        # European session: 07:00-16:00 UTC (9 hours = 37.5% of day)
         features['session_european'] = ((hours >= 7) & (hours < 16)).astype(float)
-        
-        # US session: 13:00-22:00 UTC
+
+        # US session: 13:00-22:00 UTC (9 hours = 37.5% of day)
         features['session_us'] = ((hours >= 13) & (hours < 22)).astype(float)
-        
-        # Asian session: 23:00-09:00 UTC (wraps around midnight)
+
+        # Asian session: 23:00-09:00 UTC (10 hours = 41.7% of day, wraps midnight)
         features['session_asian'] = ((hours >= 23) | (hours < 9)).astype(float)
-        
+
         return features
     
     def calculate_all_features(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -564,53 +570,60 @@ class FeatureEngineer:
     def normalize_features(self, features: pd.DataFrame) -> pd.DataFrame:
         """
         Normalize features using expanding window Z-score.
-        
-        Formula: normalized_t = clip((value_t - mean_{0:t-1}) / (std_{0:t-1} + ε), -5, 5)
-        
+
+        Formula: normalized_t = clip((value_t - mean_{0:t-1}) / (std_{0:t-1} + ε), -15, 15)
+
         CRITICAL: Uses expanding window to avoid look-ahead bias.
-        
+
+        Improved warmup handling to avoid constant 0 values in first ~1000 samples.
+
         Args:
             features: DataFrame with raw features
-            
+
         Returns:
             DataFrame with normalized features
         """
         logger.info("Normalizing features with expanding window...")
-        
+
         normalized = pd.DataFrame(index=features.index)
-        
+
         # Features that should NOT be normalized
         non_normalized_features = [
             'rsi_14', 'dxy_rsi_14', 'usdjpy_rsi_14', 'eurgbp_rsi_14', 'eurjpy_rsi_14',
             'session_european', 'session_us', 'session_asian'
         ]
-        
+
+        # Increased min_periods to 1 day of data (288 bars) for more stable warmup
+        # This prevents the constant 0 values on first 100-1000 data points
+        warmup_period = 288  # 1 day of 5-minute bars
+
         for col in features.columns:
             if col in non_normalized_features:
-                # These are already in [0, 1] range
+                # These are already in [0, 1] range or binary
                 normalized[col] = features[col]
             else:
-                # Calculate expanding mean and std
-                expanding_mean = features[col].expanding(min_periods=100).mean()
-                expanding_std = features[col].expanding(min_periods=100).std()
-                
+                # Calculate expanding mean and std with longer warmup
+                expanding_mean = features[col].expanding(min_periods=warmup_period).mean()
+                expanding_std = features[col].expanding(min_periods=warmup_period).std()
+
                 # Shift to avoid using current value in normalization
                 expanding_mean = expanding_mean.shift(1)
                 expanding_std = expanding_std.shift(1)
-                
+
                 # Normalize
                 normalized_values = (features[col] - expanding_mean) / (expanding_std + self.config.epsilon)
-                
-                # Clip to [-5, 5]
+
+                # Clip to [-15, 15] (reduced clipping probability)
                 normalized_values = normalized_values.clip(
                     lower=self.config.clip_min,
                     upper=self.config.clip_max
                 )
-                
-                # Fill NaN with 0 for warmup period
-                normalized[col] = normalized_values.fillna(0.0)
-        
-        logger.info("Normalization complete")
+
+                # Better warmup handling: use forward fill for first few values, then 0
+                # This creates smoother transition and avoids constant 0 plateau
+                normalized[col] = normalized_values.fillna(method='ffill', limit=10).fillna(0.0)
+
+        logger.info(f"Normalization complete (warmup period: {warmup_period} bars = ~1 day)")
         return normalized
     
     def validate_features(self, features: pd.DataFrame) -> Dict[str, any]:

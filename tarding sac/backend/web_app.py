@@ -1144,12 +1144,44 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     agent.total_steps += 1  # CRITICAL: Increment total steps for LR scheduling
                     state = next_state
 
-                    # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
+                    # Émettre les métriques intra-épisode tous les 20 steps (optimisation performance)
                     if episode_steps % 20 == 0:
+                        # Get current episode metrics from env
+                        current_info = env.get_current_metrics() if hasattr(env, 'get_current_metrics') else info
+
                         socketio.emit('episode_step_progress', {
                             'current_step': int(episode_steps),
                             'episode_length': int(env.episode_length),
                             'episode': int(episode + 1)
+                        })
+
+                        # NEW: Emit detailed intra-episode metrics
+                        socketio.emit('episode_intra_metrics', {
+                            'episode': int(episode + 1),
+                            'agent_id': int(agent_indices[agent_idx] if agent_id is None else agent_id),
+                            'step': int(episode_steps),
+                            'episode_length': int(env.episode_length),
+                            'progress_pct': float(episode_steps / env.episode_length * 100),
+
+                            # Current state
+                            'equity': float(current_info.get('equity', 0)),
+                            'position': float(current_info.get('position', 0)),
+                            'cumulative_reward': float(episode_reward),
+
+                            # Action stats (last 20 actions)
+                            'action_mean_recent': float(np.mean(episode_actions[-20:])) if len(episode_actions) >= 20 else 0.0,
+                            'action_std_recent': float(np.std(episode_actions[-20:])) if len(episode_actions) >= 20 else 0.0,
+                            'last_action': float(episode_actions[-1]) if episode_actions else 0.0,
+
+                            # Losses (current averages)
+                            'critic_loss_avg': float(critic_loss_sum / update_count) if update_count > 0 else 0.0,
+                            'actor_loss_avg': float(actor_loss_sum / update_count) if update_count > 0 else 0.0,
+
+                            # Buffer stats
+                            'buffer_size': len(agent.replay_buffer),
+
+                            # Timestamp
+                            'timestamp': datetime.now().isoformat()
                         })
 
                 # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
@@ -1545,12 +1577,35 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 episode_steps += 1
                 state = next_state
 
-                # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
+                # Émettre les métriques intra-épisode tous les 20 steps (optimisation performance)
                 if episode_steps % 20 == 0:
+                    # Get current episode metrics from env
+                    current_info = env.get_current_metrics() if hasattr(env, 'get_current_metrics') else info
+
                     socketio.emit('episode_step_progress', {
                         'current_step': int(episode_steps),
                         'episode_length': int(env.episode_length),
                         'episode': int(episode + 1)
+                    })
+
+                    # NEW: Emit detailed intra-episode metrics for meta-controller
+                    socketio.emit('episode_intra_metrics', {
+                        'episode': int(episode + 1),
+                        'agent_id': 'meta_controller',
+                        'step': int(episode_steps),
+                        'episode_length': int(env.episode_length),
+                        'progress_pct': float(episode_steps / env.episode_length * 100),
+
+                        # Current state
+                        'equity': float(current_info.get('equity', 0)),
+                        'position': float(current_info.get('position', 0)),
+                        'cumulative_reward': float(episode_reward),
+
+                        # Last action
+                        'last_action': float(final_action[0]) if hasattr(final_action, '__len__') else float(final_action),
+
+                        # Timestamp
+                        'timestamp': datetime.now().isoformat()
                     })
 
             # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
