@@ -293,9 +293,7 @@ class RewardCalculator:
         equity_t_minus_1: float,
         initial_capital: float,
         returns_buffer: List[float],
-        position_change: float,
         transaction_cost: float,
-        n_trades_today: int
     ) -> float:
         """
         Calculate dense reward (per step).
@@ -316,9 +314,7 @@ class RewardCalculator:
             equity_t_minus_1: Previous equity
             initial_capital: Initial capital
             returns_buffer: Recent returns
-            position_change: Position change magnitude
             transaction_cost: Transaction cost in dollars
-            n_trades_today: Number of trades in last 288 steps
 
         Returns:
             Dense reward value
@@ -373,17 +369,8 @@ class RewardCalculator:
         # Component 4: Transaction Costs (15%)
         # Always penalize costs proportionally (removed threshold to simplify)
         R_cost = -transaction_cost / initial_capital
-        
-        # Component 5: Position Management (5%)
-        # STRONG penalty for large positions to prevent account blowup
-        # Encourage conservative trading during learning
-        if n_trades_today > 20:  # INCREASED threshold from 10 to 20
-            R_position = -(n_trades_today - 20) ** 2 * 0.0001  # Overtrading penalty
-        else:
-            # Penalty proportional to position size to encourage small positions
-            R_position = -position_change * 0.01  # INCREASED from 0.0005 - discourage large trades!
-        
-        # Component 6: ULTRA-HIGH Survival bonus to DOMINATE trading losses
+
+        # Component 5: ULTRA-HIGH Survival bonus to DOMINATE trading losses
         # GOAL: Make surviving longer ALWAYS better, even with terrible trading
         #
         # User requirement:
@@ -393,11 +380,10 @@ class RewardCalculator:
         # NO SURVIVAL BONUS - Agent must learn profitable trading, not just survival
         # Focus entirely on trading performance metrics
         dense_reward = (
-            0.40 * R_return +      # 40% - basic returns (MAIN OBJECTIVE)
+            0.45 * R_return +      # 45% - basic returns (MAIN OBJECTIVE)
             0.40 * R_dsr +         # 40% - risk-adjusted returns (QUALITY)
             0.10 * R_downside +    # 10% - downside protection
-            0.05 * R_cost +        # 5% - cost control
-            0.05 * R_position      # 5% - position management
+            0.05 * R_cost          # 5% - cost control
         )
 
         return dense_reward
@@ -765,84 +751,68 @@ class TradingEnvironment(gym.Env):
                 atr,
                 action
             )
+            # Determine if we're closing a position
+            has_position = abs(self.position) > 1e-6
+            wants_new_position = abs(target_position) > 1e-6
+            position_sign_change = (self.position * target_position) < 0  # Signs are different
 
-            position_change = abs(target_position - self.position)
+            # Case 1: Closing an existing position
+            if has_position and (not wants_new_position or position_sign_change):
+                # Calculate transaction cost for closing
+                cost = self.cost_model.cost_in_dollars(
+                    abs(self.position),
+                    current_price,
+                    hour,
+                    volatility
+                )
 
-            # CRITICAL FIX: Require minimum meaningful position change to count as trade
-            # This prevents micro-adjustments from stochastic policy counting as trades
-            MIN_POSITION_CHANGE = 0.01  # 0.01 lots minimum change to count as trade
+                # Close the position
+                pnl = self._close_position(current_price, hour, volatility)
+                self.trades.append({
+                    'entry_price': self.entry_price,
+                    'exit_price': current_price,
+                    'position': self.position,
+                    'pnl': pnl,
+                    'type': 'Normal',
+                    'step': self.current_step
+                })
 
-            if position_change > MIN_POSITION_CHANGE:
-                # Determine if we're closing a position
-                has_position = abs(self.position) > 1e-6
-                wants_new_position = abs(target_position) > 1e-6
-                position_sign_change = (self.position * target_position) < 0  # Signs are different
+                # IMPORTANT: Reset position state
+                self.position = 0.0
+                self.entry_price = 0.0
+                self.sl_price = 0.0
+                self.tp_price = 0.0
 
-                # Case 1: Closing an existing position
-                if has_position and (not wants_new_position or position_sign_change):
-                    # Calculate transaction cost for closing
-                    cost = self.cost_model.cost_in_dollars(
-                        abs(self.position),
-                        current_price,
-                        hour,
-                        volatility
-                    )
+                logger.debug(
+                    f"Position closed: PnL={pnl:.2f}, cost={cost:.2f}, "
+                    f"staying flat (no immediate reopening)"
+                )
 
-                    # Close the position
-                    pnl = self._close_position(current_price, hour, volatility)
-                    self.trades.append({
-                        'entry_price': self.entry_price,
-                        'exit_price': current_price,
-                        'position': self.position,
-                        'pnl': pnl,
-                        'type': 'Normal',
-                        'step': self.current_step
-                    })
+                # DO NOT open new position in same step (anti-overtrading rule #3)
+                # Even if target_position != 0, we stay flat until next step
 
-                    # IMPORTANT: Reset position state
-                    self.position = 0.0
-                    self.entry_price = 0.0
-                    self.sl_price = 0.0
-                    self.tp_price = 0.0
+            # Case 2: Opening a new position (only when currently flat)
+            elif not has_position and wants_new_position:
+                # Calculate transaction cost for opening
+                cost = self.cost_model.cost_in_dollars(
+                    abs(target_position),
+                    current_price,
+                    hour,
+                    volatility
+                )
 
-                    logger.debug(
-                        f"Position closed: PnL={pnl:.2f}, cost={cost:.2f}, "
-                        f"staying flat (no immediate reopening)"
-                    )
+                # Open new position
+                self.position = target_position
+                self.entry_price = current_price
+                self.sl_price = new_sl
+                self.tp_price = new_tp
+                self.equity -= cost
+                self.total_trades += 1
 
-                    # DO NOT open new position in same step (anti-overtrading rule #3)
-                    # Even if target_position != 0, we stay flat until next step
-
-                # Case 2: Opening a new position (only when currently flat)
-                elif not has_position and wants_new_position:
-                    # Calculate transaction cost for opening
-                    cost = self.cost_model.cost_in_dollars(
-                        abs(target_position),
-                        current_price,
-                        hour,
-                        volatility
-                    )
-
-                    # Open new position
-                    self.position = target_position
-                    self.entry_price = current_price
-                    self.sl_price = new_sl
-                    self.tp_price = new_tp
-                    self.equity -= cost
-                    self.total_trades += 1
-
-                    logger.debug(
-                        f"New position opened: size={self.position:.4f}, "
-                        f"entry={current_price:.5f}, SL={new_sl:.5f}, TP={new_tp:.5f}"
-                    )
-            else:
-                # Log rejected actions for diagnostic purposes
-                if position_change > 1e-6:  # Only log if there was actual position change intent
-                    logger.debug(
-                        f"Action rejected: position_change={position_change:.4f} < "
-                        f"{MIN_POSITION_CHANGE} (target={target_position:.4f}, "
-                        f"current={self.position:.4f})"
-                    )
+                logger.debug(
+                    f"New position opened: size={self.position:.4f}, "
+                    f"entry={current_price:.5f}, SL={new_sl:.5f}, TP={new_tp:.5f}"
+                )
         
         # Update equity based on unrealized P&L
         if abs(self.position) > 1e-6:
@@ -873,9 +843,7 @@ class TradingEnvironment(gym.Env):
             self.equity_curve[-2] if len(self.equity_curve) > 1 else self.config.initial_capital,
             self.config.initial_capital,
             self.returns_buffer,
-            position_change,
-            cost,
-            n_trades_today
+            cost
         )
         
         # Calculate current drawdown (used for termination at 80%)
