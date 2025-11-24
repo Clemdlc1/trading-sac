@@ -6,11 +6,25 @@ L'environnement de trading utilise maintenant un **action space discret** avec 3
 
 ## Actions Disponibles
 
+L'environnement accepte **deux types** d'actions :
+
+### 1. Actions Discrètes (recommandé)
+
 | Action | Valeur | Comportement |
 |--------|--------|--------------|
 | **0** | `0.0` | **Flat** - Ferme toutes les positions et reste à plat |
 | **1** | `1.0` | **Long** - Ouvre une position longue (et ferme short si existant) |
 | **2** | `-1.0` | **Short** - Ouvre une position courte (et ferme long si existant) |
+
+### 2. Actions Continues (pour compatibilité SAC)
+
+L'environnement accepte aussi des actions continues `[-1, 1]` qui sont automatiquement discrétisées :
+
+| Valeur Continue | Action Discrète | Comportement |
+|----------------|----------------|--------------|
+| `< -0.33` | 2 (Short) | Ouvre position courte |
+| `[-0.33, 0.33]` | 0 (Flat) | Ferme tout |
+| `> 0.33` | 1 (Long) | Ouvre position longue |
 
 ## Changements Techniques
 
@@ -64,6 +78,8 @@ def step(self, action) -> Tuple[np.ndarray, float, bool, Dict]:
 
 ## Utilisation
 
+### Avec Actions Discrètes
+
 ```python
 from backend.trading_env import TradingEnvironment
 
@@ -84,14 +100,37 @@ action = 2  # Short
 obs, reward, done, info = env.step(action)
 ```
 
+### Avec SAC (Actions Continues)
+
+```python
+from backend.trading_env import TradingEnvironment
+from backend.sac_agent import SACAgent, SACConfig
+
+# Créer l'environnement
+env = TradingEnvironment(data=train_data, features=train_features)
+
+# Créer l'agent SAC
+config = SACConfig(state_dim=30, action_dim=1)
+agent = SACAgent(config=config)
+
+# Entraînement
+obs = env.reset()
+action = agent.select_action(obs)  # Génère action continue comme [0.7]
+obs, reward, done, info = env.step(action)  # Automatiquement converti en action 1 (Long)
+```
+
+**Comment ça marche** : SAC génère une action continue (ex: `[0.7]`), l'environnement la convertit automatiquement en action discrète (ex: `1` pour Long), puis exécute l'action.
+
 ## Compatibilité avec les Algorithmes
 
 L'action space discret est compatible avec :
 
-- ✅ **DQN** (Deep Q-Network)
-- ✅ **PPO** (version discrète)
-- ✅ **A2C/A3C** (avec politique catégorielle)
-- ⚠️ **SAC** - Non compatible directement (conçu pour actions continues)
+- ✅ **DQN** (Deep Q-Network) - Actions discrètes natives
+- ✅ **PPO** (version discrète) - Actions discrètes natives
+- ✅ **A2C/A3C** (avec politique catégorielle) - Actions discrètes natives
+- ✅ **SAC** - Compatible ! Les actions continues sont automatiquement discrétisées
+
+**Note importante pour SAC** : L'agent SAC génère des actions continues `[-1, 1]` qui sont automatiquement converties en actions discrètes par l'environnement. Aucune modification de l'agent n'est nécessaire !
 
 ## Comportement Détaillé
 
@@ -169,3 +208,15 @@ R: L'environnement détecte que la position est déjà correcte et ne fait rien 
 
 **Q: Les coûts de transaction sont-ils appliqués ?**
 R: Oui, chaque changement de position (open/close) a un coût réaliste (spread + slippage + market impact).
+
+**Q: Est-ce que SAC fonctionne avec l'action space discret ?**
+R: Oui ! L'environnement accepte automatiquement les actions continues de SAC et les convertit en actions discrètes. SAC qui génère `[0.8]` sera converti en action `1` (Long).
+
+**Q: Comment fonctionne la conversion continue → discret ?**
+R: Les seuils sont :
+- `< -0.33` → Short (action 2)
+- `[-0.33, 0.33]` → Flat (action 0)
+- `> 0.33` → Long (action 1)
+
+**Q: Puis-je changer les seuils de discrétisation ?**
+R: Oui, modifie la méthode `step()` dans `trading_env.py` (lignes 681-686 et 693-698).

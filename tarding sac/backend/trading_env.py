@@ -666,14 +666,37 @@ class TradingEnvironment(gym.Env):
         Execute one step in the environment.
 
         Args:
-            action: Discrete action (0, 1, or 2) from agent
+            action: Can be either:
+                - Discrete action (0, 1, or 2) from discrete agent
+                - Continuous action ([-1, 1]) from continuous agent like SAC
 
         Returns:
             Tuple of (observation, reward, done, info)
         """
-        # Convert discrete action to continuous value
-        # 0 -> 0.0 (flat), 1 -> 1.0 (long), 2 -> -1.0 (short)
-        action_continuous = self._convert_discrete_action(action)
+        # Handle both continuous and discrete actions
+        if isinstance(action, (np.ndarray, list)):
+            # Continuous action from SAC: convert to discrete first, then to continuous
+            action_value = float(action[0]) if len(action) > 0 else float(action)
+            # Discretize: [-1, -0.33) -> 2 (short), [-0.33, 0.33] -> 0 (flat), (0.33, 1] -> 1 (long)
+            if action_value < -0.33:
+                action_discrete = 2  # Short
+            elif action_value > 0.33:
+                action_discrete = 1  # Long
+            else:
+                action_discrete = 0  # Flat
+            action_continuous = self._convert_discrete_action(action_discrete)
+        elif isinstance(action, (int, np.integer)):
+            # Already discrete action: convert to continuous
+            action_continuous = self._convert_discrete_action(action)
+        else:
+            # Single float value: discretize it
+            if action < -0.33:
+                action_discrete = 2
+            elif action > 0.33:
+                action_discrete = 1
+            else:
+                action_discrete = 0
+            action_continuous = self._convert_discrete_action(action_discrete)
         
         # Get current state
         idx = self.episode_start + self.current_step
