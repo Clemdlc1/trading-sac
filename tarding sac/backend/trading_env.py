@@ -91,9 +91,12 @@ class TradingEnvConfig:
     obs_min: float = -10.0
     obs_max: float = 10.0
 
-    # Anti-overtrading parameters
-    overtrading_dead_zone: float = 0.25  # If |action - current_position| < threshold, hold
-    
+    # Anti-overtrading parameters (NEW SYSTEM)
+    # 1. No position reinforcement: long positions reject positive actions, shorts reject negative
+    # 2. No immediate reopening: closing a position keeps agent flat until next step
+    # 3. Minimum entry threshold: require |action| >= 0.2 to enter from flat
+    min_entry_threshold: float = 0.2  # Minimum action strength to enter position when flat
+
     # Action space
     action_min: float = -1.0
     action_max: float = 1.0
@@ -666,10 +669,10 @@ class TradingEnvironment(gym.Env):
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict]:
         """
         Execute one step in the environment.
-        
+
         Args:
             action: Agent action (position target)
-            
+
         Returns:
             Tuple of (observation, reward, done, info)
         """
@@ -677,18 +680,40 @@ class TradingEnvironment(gym.Env):
         action = float(action[0])
         action = np.clip(action, self.config.action_min, self.config.action_max)
 
-        # Anti-overtrading: Dead zone logic
-        # If the action is too similar to current position, force hold to avoid transaction costs
-        position_difference = abs(action - self.position)
+        # NEW ANTI-OVERTRADING LOGIC:
+        # 1. If long position (position > 0): only actions <= 0 can close it (no reinforcement)
+        # 2. If short position (position < 0): only actions >= 0 can close it (no reinforcement)
+        # 3. Minimum threshold of 0.2 to enter new position when flat
+        # 4. Position size scales with action strength above threshold
 
-        if position_difference < self.config.overtrading_dead_zone and abs(self.position) > 1e-6:
-            # Force action to equal current position (hold)
-            original_action = action
-            action = self.position
-            logger.debug(
-                f"Anti-overtrading: Action {original_action:.4f} too close to position {self.position:.4f}, "
-                f"forcing hold (diff={position_difference:.4f} < {self.config.overtrading_dead_zone})"
-            )
+        original_action = action
+
+        # Case 1: Already in a position - prevent reinforcement
+        if abs(self.position) > 1e-6:
+            if self.position > 0 and action > 0:
+                # Long position: reject positive actions (would reinforce)
+                action = 0.0  # Force flat to avoid overtrading
+                logger.debug(
+                    f"Anti-overtrading: Rejecting positive action {original_action:.4f} "
+                    f"while in long position {self.position:.4f} (prevents reinforcement)"
+                )
+            elif self.position < 0 and action < 0:
+                # Short position: reject negative actions (would reinforce)
+                action = 0.0  # Force flat to avoid overtrading
+                logger.debug(
+                    f"Anti-overtrading: Rejecting negative action {original_action:.4f} "
+                    f"while in short position {self.position:.4f} (prevents reinforcement)"
+                )
+
+        # Case 2: Flat position - require minimum threshold to enter
+        else:
+            if abs(action) < self.config.min_entry_threshold:
+                # Action too weak to enter position
+                action = 0.0
+                logger.debug(
+                    f"Anti-overtrading: Action {original_action:.4f} below threshold "
+                    f"{self.config.min_entry_threshold}, staying flat (prevents weak entries)"
+                )
 
         # Get current state
         idx = self.episode_start + self.current_step
@@ -730,27 +755,33 @@ class TradingEnvironment(gym.Env):
             atr,
             action
         )
-        
-        # Execute position change
+
+        # Execute position change with NEW ANTI-OVERTRADING RULES
         position_change = abs(target_position - self.position)
 
         # CRITICAL FIX: Require minimum meaningful position change to count as trade
         # This prevents micro-adjustments from stochastic policy counting as trades
-        # UPDATED: Reduced from 0.1 to 0.02 to match realistic position sizes
-        # With risk_per_trade=0.0005 (0.05%), typical positions are 0.05-0.09 lots
-        MIN_POSITION_CHANGE = 0.01  # 0.03 lots minimum change to count as trade
+        MIN_POSITION_CHANGE = 0.01  # 0.01 lots minimum change to count as trade
+
+        cost = 0.0
 
         if position_change > MIN_POSITION_CHANGE:
-            # Calculate transaction cost
-            cost = self.cost_model.cost_in_dollars(
-                position_change,
-                current_price,
-                hour,
-                volatility
-            )
-            
-            # Close old position if exists
-            if abs(self.position) > 1e-6:
+            # Determine if we're closing a position
+            has_position = abs(self.position) > 1e-6
+            wants_new_position = abs(target_position) > 1e-6
+            position_sign_change = (self.position * target_position) < 0  # Signs are different
+
+            # Case 1: Closing an existing position
+            if has_position and (not wants_new_position or position_sign_change):
+                # Calculate transaction cost for closing
+                cost = self.cost_model.cost_in_dollars(
+                    abs(self.position),
+                    current_price,
+                    hour,
+                    volatility
+                )
+
+                # Close the position
                 pnl = self._close_position(current_price, hour, volatility)
                 self.trades.append({
                     'entry_price': self.entry_price,
@@ -760,17 +791,44 @@ class TradingEnvironment(gym.Env):
                     'type': 'Normal',
                     'step': self.current_step
                 })
-            
-            # Open new position
-            if abs(target_position) > 1e-6:
+
+                # IMPORTANT: Reset position state
+                self.position = 0.0
+                self.entry_price = 0.0
+                self.sl_price = 0.0
+                self.tp_price = 0.0
+
+                logger.debug(
+                    f"Position closed: PnL={pnl:.2f}, cost={cost:.2f}, "
+                    f"staying flat (no immediate reopening)"
+                )
+
+                # DO NOT open new position in same step (anti-overtrading rule #3)
+                # Even if target_position != 0, we stay flat until next step
+
+            # Case 2: Opening a new position (only when currently flat)
+            elif not has_position and wants_new_position:
+                # Calculate transaction cost for opening
+                cost = self.cost_model.cost_in_dollars(
+                    abs(target_position),
+                    current_price,
+                    hour,
+                    volatility
+                )
+
+                # Open new position
                 self.position = target_position
                 self.entry_price = current_price
                 self.sl_price = new_sl
                 self.tp_price = new_tp
                 self.equity -= cost
                 self.total_trades += 1
+
+                logger.debug(
+                    f"New position opened: size={self.position:.4f}, "
+                    f"entry={current_price:.5f}, SL={new_sl:.5f}, TP={new_tp:.5f}"
+                )
         else:
-            cost = 0.0
             # Log rejected actions for diagnostic purposes
             if position_change > 1e-6:  # Only log if there was actual position change intent
                 logger.debug(
