@@ -339,7 +339,7 @@ def load_model():
         
         # Charger l'ensemble
         system_state.ensemble_controller = EnsembleMetaController(
-            state_dim=31  # 30 technical features + 1 position feature,
+            state_dim=31,  # 30 technical features + 1 position feature
             action_dim=1,
             num_agents=system_state.config['model']['ensemble_size']
         )
@@ -897,7 +897,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
         if agent_id is not None:
             # Entraîner un seul agent
             sac_config = SACConfig(
-                state_dim=31  # 30 technical features + 1 position feature,
+                state_dim=31,  # 30 technical features + 1 position feature,
                 action_dim=1,
                 hidden_dims=[256, 256]
             )
@@ -912,7 +912,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             # Entraîner tous les agents
             for i in range(system_state.config['model']['ensemble_size']):
                 sac_config = SACConfig(
-                    state_dim=31  # 30 technical features + 1 position feature,
+                    state_dim=31,  # 30 technical features + 1 position feature,
                     action_dim=1,
                     hidden_dims=[256, 256]
                 )
@@ -1437,7 +1437,7 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
 
         for i in range(3):
             sac_config = SACConfig(
-                state_dim=31  # 30 technical features + 1 position feature,
+                state_dim=31,  # 30 technical features + 1 position feature,
                 action_dim=1,
                 hidden_dims=[256, 256]
             )
@@ -1456,7 +1456,7 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
 
         # Créer le meta-controller
         meta_controller = EnsembleMetaController(
-            state_dim=31  # 30 technical features + 1 position feature,
+            state_dim=31,  # 30 technical features + 1 position feature,
             action_dim=1,
             num_agents=3
         )
@@ -1760,7 +1760,7 @@ def run_validation_process(validator: ValidationFramework, model_path: str):
 
         # Charger le modèle
         sac_config = SACConfig(
-            state_dim=31  # 30 technical features + 1 position feature,
+            state_dim=31,  # 30 technical features + 1 position feature,
             action_dim=1,
             hidden_dims=[256, 256]
         )

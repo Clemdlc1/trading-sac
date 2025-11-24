@@ -881,36 +881,36 @@ class DataPersistence:
             for pair, df in train_data.items():
                 pair_grp = train_grp.create_group(pair)
                 pair_grp.create_dataset('timestamp', data=df['timestamp'].astype('int64') // 10**9)
-                pair_grp.create_dataset('open', data=df['open'].values)
-                pair_grp.create_dataset('high', data=df['high'].values)
-                pair_grp.create_dataset('low', data=df['low'].values)
-                pair_grp.create_dataset('close', data=df['close'].values)
+                pair_grp.create_dataset('open', data=df['open'].values, dtype='float64')
+                pair_grp.create_dataset('high', data=df['high'].values, dtype='float64')
+                pair_grp.create_dataset('low', data=df['low'].values, dtype='float64')
+                pair_grp.create_dataset('close', data=df['close'].values, dtype='float64')
                 # Hidden columns for precise calculations (not features)
-                pair_grp.create_dataset('raw_close', data=df['close'].values)  # Non-normalized price
+                pair_grp.create_dataset('raw_close', data=df['close'].values, dtype='float64')  # Non-normalized price
 
             # Save validation data
             val_grp = f.create_group('val')
             for pair, df in val_data.items():
                 pair_grp = val_grp.create_group(pair)
                 pair_grp.create_dataset('timestamp', data=df['timestamp'].astype('int64') // 10**9)
-                pair_grp.create_dataset('open', data=df['open'].values)
-                pair_grp.create_dataset('high', data=df['high'].values)
-                pair_grp.create_dataset('low', data=df['low'].values)
-                pair_grp.create_dataset('close', data=df['close'].values)
+                pair_grp.create_dataset('open', data=df['open'].values, dtype='float64')
+                pair_grp.create_dataset('high', data=df['high'].values, dtype='float64')
+                pair_grp.create_dataset('low', data=df['low'].values, dtype='float64')
+                pair_grp.create_dataset('close', data=df['close'].values, dtype='float64')
                 # Hidden columns for precise calculations (not features)
-                pair_grp.create_dataset('raw_close', data=df['close'].values)  # Non-normalized price
+                pair_grp.create_dataset('raw_close', data=df['close'].values, dtype='float64')  # Non-normalized price
 
             # Save test data
             test_grp = f.create_group('test')
             for pair, df in test_data.items():
                 pair_grp = test_grp.create_group(pair)
                 pair_grp.create_dataset('timestamp', data=df['timestamp'].astype('int64') // 10**9)
-                pair_grp.create_dataset('open', data=df['open'].values)
-                pair_grp.create_dataset('high', data=df['high'].values)
-                pair_grp.create_dataset('low', data=df['low'].values)
-                pair_grp.create_dataset('close', data=df['close'].values)
+                pair_grp.create_dataset('open', data=df['open'].values, dtype='float64')
+                pair_grp.create_dataset('high', data=df['high'].values, dtype='float64')
+                pair_grp.create_dataset('low', data=df['low'].values, dtype='float64')
+                pair_grp.create_dataset('close', data=df['close'].values, dtype='float64')
                 # Hidden columns for precise calculations (not features)
-                pair_grp.create_dataset('raw_close', data=df['close'].values)  # Non-normalized price
+                pair_grp.create_dataset('raw_close', data=df['close'].values, dtype='float64')  # Non-normalized price
             
             # Save metadata
             meta_grp = f.create_group('metadata')

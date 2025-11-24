@@ -739,34 +739,34 @@ class FeaturePersistence:
             # Save training features
             train_grp = features_grp.create_group('train')
             for col in train_features.columns:
-                train_grp.create_dataset(col, data=train_features[col].values)
+                train_grp.create_dataset(col, data=train_features[col].values, dtype='float64')
 
             # Save validation features
             val_grp = features_grp.create_group('val')
             for col in val_features.columns:
-                val_grp.create_dataset(col, data=val_features[col].values)
+                val_grp.create_dataset(col, data=val_features[col].values, dtype='float64')
 
             # Save test features
             test_grp = features_grp.create_group('test')
             for col in test_features.columns:
-                test_grp.create_dataset(col, data=test_features[col].values)
+                test_grp.create_dataset(col, data=test_features[col].values, dtype='float64')
 
             # NEW: Save hidden columns (not visible to agent)
             hidden_grp = f.create_group('hidden')
 
             # Training hidden columns
             hidden_train_grp = hidden_grp.create_group('train')
-            hidden_train_grp.create_dataset('raw_close', data=train_raw_close.values)
+            hidden_train_grp.create_dataset('raw_close', data=train_raw_close.values, dtype='float64')
             hidden_train_grp.create_dataset('timestamp', data=train_timestamps.astype('int64') // 10**9)
 
             # Validation hidden columns
             hidden_val_grp = hidden_grp.create_group('val')
-            hidden_val_grp.create_dataset('raw_close', data=val_raw_close.values)
+            hidden_val_grp.create_dataset('raw_close', data=val_raw_close.values, dtype='float64')
             hidden_val_grp.create_dataset('timestamp', data=val_timestamps.astype('int64') // 10**9)
 
             # Test hidden columns
             hidden_test_grp = hidden_grp.create_group('test')
-            hidden_test_grp.create_dataset('raw_close', data=test_raw_close.values)
+            hidden_test_grp.create_dataset('raw_close', data=test_raw_close.values, dtype='float64')
             hidden_test_grp.create_dataset('timestamp', data=test_timestamps.astype('int64') // 10**9)
 
             # Save metadata

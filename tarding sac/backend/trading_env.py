@@ -92,8 +92,7 @@ class TradingEnvConfig:
     obs_max: float = 10.0
 
     # Anti-overtrading parameters
-    overtrading_dead_zone: float = 0.15  # If |action - current_position| < threshold, hold
-    overtrading_penalty: float = 0.0001  # Small penalty for small position changes
+    overtrading_dead_zone: float = 0.25  # If |action - current_position| < threshold, hold
     
     # Action space
     action_min: float = -1.0
