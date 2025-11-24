@@ -73,8 +73,8 @@ class DataConfig:
         'SPXUSD',  # S&P 500 (available in histdata)
     ])
     
-    # Date ranges
-    train_start: str = "2011-01-01"
+    # Date ranges - training starts in 2012 to avoid 2011 noise
+    train_start: str = "2012-01-01"  # Changed from 2011-01-01 (2011 has too much noise)
     train_end: str = "2023-12-31"
     val_start: str = "2019-01-01"  # Intentional overlap
     val_end: str = "2023-12-31"

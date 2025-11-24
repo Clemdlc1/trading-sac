@@ -1011,10 +1011,14 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
         # Logger pour les transitions (pour CSV)
         transitions_log = []
 
+        # Logger pour les métriques intra-épisode
+        intra_episode_metrics_log = []
+
         # Entraîner chaque agent
         for episode in range(num_episodes):
             # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
             transitions_log.clear()
+            intra_episode_metrics_log.clear()
 
             # Logger les transitions seulement pour les épisodes qui seront sauvegardés (optimisation performance)
             should_log_transitions = (episode % 5 == 0 and episode > 0)
@@ -1144,13 +1148,66 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                     agent.total_steps += 1  # CRITICAL: Increment total steps for LR scheduling
                     state = next_state
 
-                    # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
+                    # Émettre les métriques intra-épisode tous les 20 steps (optimisation performance)
                     if episode_steps % 20 == 0:
+                        # Get current episode metrics from env
+                        current_info = env.get_current_metrics() if hasattr(env, 'get_current_metrics') else info
+
                         socketio.emit('episode_step_progress', {
                             'current_step': int(episode_steps),
                             'episode_length': int(env.episode_length),
                             'episode': int(episode + 1)
                         })
+
+                        # Calculate current averages for entropy metrics
+                        current_policy_entropy = float(policy_entropy_sum / update_count) if update_count > 0 else 0.0
+                        current_entropy_gap = float(entropy_gap_sum / update_count) if update_count > 0 else 0.0
+
+                        # NEW: Emit detailed intra-episode metrics (with alpha and entropy)
+                        intra_metrics = {
+                            'episode': int(episode + 1),
+                            'agent_id': int(agent_indices[agent_idx] if agent_id is None else agent_id),
+                            'step': int(episode_steps),
+                            'episode_length': int(env.episode_length),
+                            'progress_pct': float(episode_steps / env.episode_length * 100),
+
+                            # Current state
+                            'equity': float(current_info.get('equity', 0)),
+                            'position': float(current_info.get('position', 0)),
+                            'cumulative_reward': float(episode_reward),
+
+                            # Action stats (last 20 actions)
+                            'action_mean_recent': float(np.mean(episode_actions[-20:])) if len(episode_actions) >= 20 else 0.0,
+                            'action_std_recent': float(np.std(episode_actions[-20:])) if len(episode_actions) >= 20 else 0.0,
+                            'last_action': float(episode_actions[-1]) if episode_actions else 0.0,
+
+                            # Losses (current averages)
+                            'critic_loss_avg': float(critic_loss_sum / update_count) if update_count > 0 else 0.0,
+                            'actor_loss_avg': float(actor_loss_sum / update_count) if update_count > 0 else 0.0,
+                            'alpha_loss_avg': float(alpha_loss_sum / update_count) if update_count > 0 else 0.0,
+
+                            # SAC specific - Alpha and Entropy
+                            'alpha': float(agent.alpha.item()),
+                            'target_entropy': float(agent.target_entropy) if hasattr(agent, 'target_entropy') else 0.0,
+                            'policy_entropy': current_policy_entropy,
+                            'entropy_gap': current_entropy_gap,
+
+                            # Q-values
+                            'q1_mean': float(q1_mean_sum / update_count) if update_count > 0 else 0.0,
+                            'td_error_mean': float(td_error_mean_sum / update_count) if update_count > 0 else 0.0,
+
+                            # Buffer stats
+                            'buffer_size': len(agent.replay_buffer),
+
+                            # Timestamp
+                            'timestamp': datetime.now().isoformat()
+                        }
+
+                        # Emit to frontend
+                        socketio.emit('episode_intra_metrics', intra_metrics)
+
+                        # Log for file save
+                        intra_episode_metrics_log.append(intra_metrics)
 
                 # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
                 if should_log_transitions:
@@ -1274,6 +1331,21 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 # Envoyer TOUT l'historique au frontend (pas de limitation)
                 # Le frontend peut gérer l'affichage (zoom, pan, etc.)
                 history_to_send = metrics_history
+
+                # Sauvegarder les métriques intra-épisode dans un fichier JSON (1 par épisode)
+                if len(intra_episode_metrics_log) > 0:
+                    intra_metrics_dir = Path('logs/intra_episode_metrics')
+                    intra_metrics_dir.mkdir(parents=True, exist_ok=True)
+
+                    intra_metrics_filename = intra_metrics_dir / f'intra_metrics_ep{episode + 1}_agent{current_agent_id}.json'
+                    with open(intra_metrics_filename, 'w') as f:
+                        json.dump({
+                            'episode': episode + 1,
+                            'agent_id': current_agent_id,
+                            'num_samples': len(intra_episode_metrics_log),
+                            'metrics': intra_episode_metrics_log
+                        }, f, indent=2)
+                    logger.info(f"Intra-episode metrics sauvegardées: {intra_metrics_filename} ({len(intra_episode_metrics_log)} samples)")
 
                 # Émettre progression à chaque épisode avec TOUTES les métriques
                 socketio.emit('training_progress', {
@@ -1476,10 +1548,14 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
         # Logger pour les transitions (pour CSV)
         transitions_log = []
 
+        # Logger pour les métriques intra-épisode
+        intra_episode_metrics_log = []
+
         # Entraîner le meta-controller
         for episode in range(num_episodes):
             # Vider le log de transitions au début de chaque épisode pour ne sauvegarder que l'épisode du checkpoint
             transitions_log.clear()
+            intra_episode_metrics_log.clear()
 
             # Logger les transitions seulement pour les épisodes qui seront sauvegardés (optimisation performance)
             should_log_transitions = (episode % 50 == 0 and episode > 0)
@@ -1545,13 +1621,45 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
                 episode_steps += 1
                 state = next_state
 
-                # Émettre la progression de l'épisode tous les 20 steps (optimisation performance)
+                # Émettre les métriques intra-épisode tous les 20 steps (optimisation performance)
                 if episode_steps % 20 == 0:
+                    # Get current episode metrics from env
+                    current_info = env.get_current_metrics() if hasattr(env, 'get_current_metrics') else info
+
                     socketio.emit('episode_step_progress', {
                         'current_step': int(episode_steps),
                         'episode_length': int(env.episode_length),
                         'episode': int(episode + 1)
                     })
+
+                    # NEW: Emit detailed intra-episode metrics for meta-controller
+                    intra_metrics = {
+                        'episode': int(episode + 1),
+                        'agent_id': 'meta_controller',
+                        'step': int(episode_steps),
+                        'episode_length': int(env.episode_length),
+                        'progress_pct': float(episode_steps / env.episode_length * 100),
+
+                        # Current state
+                        'equity': float(current_info.get('equity', 0)),
+                        'position': float(current_info.get('position', 0)),
+                        'cumulative_reward': float(episode_reward),
+
+                        # Last action
+                        'last_action': float(final_action[0]) if hasattr(final_action, '__len__') else float(final_action),
+
+                        # Agent actions
+                        'agent_actions': [float(a[0]) if hasattr(a, '__len__') else float(a) for a in agent_actions],
+
+                        # Timestamp
+                        'timestamp': datetime.now().isoformat()
+                    }
+
+                    # Emit to frontend
+                    socketio.emit('episode_intra_metrics', intra_metrics)
+
+                    # Log for file save
+                    intra_episode_metrics_log.append(intra_metrics)
 
             # Capturer la date de fin d'épisode et l'ajouter à la dernière transition
             if should_log_transitions:
@@ -1561,6 +1669,21 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
 
             # Calculer métriques de l'épisode
             env_metrics = env.get_episode_metrics()
+
+            # Sauvegarder les métriques intra-épisode dans un fichier JSON (1 par épisode)
+            if len(intra_episode_metrics_log) > 0:
+                intra_metrics_dir = Path('logs/intra_episode_metrics')
+                intra_metrics_dir.mkdir(parents=True, exist_ok=True)
+
+                intra_metrics_filename = intra_metrics_dir / f'intra_metrics_ep{episode + 1}_meta_controller.json'
+                with open(intra_metrics_filename, 'w') as f:
+                    json.dump({
+                        'episode': episode + 1,
+                        'agent_id': 'meta_controller',
+                        'num_samples': len(intra_episode_metrics_log),
+                        'metrics': intra_episode_metrics_log
+                    }, f, indent=2)
+                logger.info(f"Intra-episode metrics sauvegardées: {intra_metrics_filename} ({len(intra_episode_metrics_log)} samples)")
 
             # Mettre à jour l'état du training
             system_state.training_state['current_episode'] = episode + 1
