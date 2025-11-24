@@ -682,23 +682,36 @@ class FeaturePersistence:
         train_timestamps: pd.Series,
         val_timestamps: pd.Series,
         test_timestamps: pd.Series,
+        train_raw_close: pd.Series,
+        val_raw_close: pd.Series,
+        test_raw_close: pd.Series,
         validation_results: Dict,
         filename: str = "features_normalized.h5"
     ) -> Path:
         """
         Save normalized features to HDF5.
-        
+
         Structure:
         /features/
           train/
           val/
           test/
+        /hidden/  <- NEW: Hidden columns not visible to agent
+          train/
+            raw_close  <- Non-normalized price for precise PnL
+            timestamp  <- Time for precise calculations
+          val/
+            raw_close
+            timestamp
+          test/
+            raw_close
+            timestamp
         /metadata/
           timestamps/
           validation/
         /normalization_params/
           (future: for storing means/stds if needed)
-        
+
         Args:
             train_features: Training features
             val_features: Validation features
@@ -706,44 +719,65 @@ class FeaturePersistence:
             train_timestamps: Training timestamps
             val_timestamps: Validation timestamps
             test_timestamps: Test timestamps
+            train_raw_close: Training raw close prices (non-normalized)
+            val_raw_close: Validation raw close prices (non-normalized)
+            test_raw_close: Test raw close prices (non-normalized)
             validation_results: Validation results dictionary
             filename: Output filename
-            
+
         Returns:
             Path to saved file
         """
         output_path = self.config.normalized_data_dir / filename
-        
+
         logger.info(f"Saving normalized features to {output_path}")
-        
+
         with h5py.File(output_path, 'w') as f:
             # Create feature groups
             features_grp = f.create_group('features')
-            
+
             # Save training features
             train_grp = features_grp.create_group('train')
             for col in train_features.columns:
                 train_grp.create_dataset(col, data=train_features[col].values)
-            
+
             # Save validation features
             val_grp = features_grp.create_group('val')
             for col in val_features.columns:
                 val_grp.create_dataset(col, data=val_features[col].values)
-            
+
             # Save test features
             test_grp = features_grp.create_group('test')
             for col in test_features.columns:
                 test_grp.create_dataset(col, data=test_features[col].values)
-            
+
+            # NEW: Save hidden columns (not visible to agent)
+            hidden_grp = f.create_group('hidden')
+
+            # Training hidden columns
+            hidden_train_grp = hidden_grp.create_group('train')
+            hidden_train_grp.create_dataset('raw_close', data=train_raw_close.values)
+            hidden_train_grp.create_dataset('timestamp', data=train_timestamps.astype('int64') // 10**9)
+
+            # Validation hidden columns
+            hidden_val_grp = hidden_grp.create_group('val')
+            hidden_val_grp.create_dataset('raw_close', data=val_raw_close.values)
+            hidden_val_grp.create_dataset('timestamp', data=val_timestamps.astype('int64') // 10**9)
+
+            # Test hidden columns
+            hidden_test_grp = hidden_grp.create_group('test')
+            hidden_test_grp.create_dataset('raw_close', data=test_raw_close.values)
+            hidden_test_grp.create_dataset('timestamp', data=test_timestamps.astype('int64') // 10**9)
+
             # Save metadata
             meta_grp = f.create_group('metadata')
-            
+
             # Save timestamps
             timestamps_grp = meta_grp.create_group('timestamps')
             timestamps_grp.create_dataset('train', data=train_timestamps.astype('int64') // 10**9)
             timestamps_grp.create_dataset('val', data=val_timestamps.astype('int64') // 10**9)
             timestamps_grp.create_dataset('test', data=test_timestamps.astype('int64') // 10**9)
-            
+
             # Save feature names
             feature_names = [name.encode('utf-8') for name in train_features.columns]
             meta_grp.create_dataset('feature_names', data=feature_names)
@@ -769,42 +803,44 @@ class FeaturePersistence:
     def load_features_from_hdf5(self, filename: str = "features_normalized.h5") -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Load normalized features from HDF5.
-        
+
+        IMPORTANT: Also loads hidden columns (raw_close, timestamp) for precise PnL calculations
+
         Args:
             filename: Input filename
-            
+
         Returns:
             Tuple of (train_features, val_features, test_features)
         """
         input_path = self.config.normalized_data_dir / filename
-        
+
         if not input_path.exists():
             raise FileNotFoundError(f"Features file not found: {input_path}")
-        
+
         logger.info(f"Loading normalized features from {input_path}")
-        
+
         with h5py.File(input_path, 'r') as f:
             # Load feature names
             feature_names = [name.decode('utf-8') for name in f['metadata/feature_names'][:]]
-            
+
             # Load training features
             train_features = pd.DataFrame({
                 col: f[f'features/train/{col}'][:]
                 for col in feature_names
             })
-            
+
             # Load validation features
             val_features = pd.DataFrame({
                 col: f[f'features/val/{col}'][:]
                 for col in feature_names
             })
-            
+
             # Load test features
             test_features = pd.DataFrame({
                 col: f[f'features/test/{col}'][:]
                 for col in feature_names
             })
-            
+
             # Load timestamps
             train_features['timestamp'] = pd.to_datetime(
                 f['metadata/timestamps/train'][:], unit='s'
@@ -815,11 +851,25 @@ class FeaturePersistence:
             test_features['timestamp'] = pd.to_datetime(
                 f['metadata/timestamps/test'][:], unit='s'
             )
-            
+
+            # Load hidden columns if available (for backward compatibility)
+            if 'hidden' in f:
+                # Training hidden columns
+                if 'hidden/train/raw_close' in f:
+                    train_features['raw_close'] = f['hidden/train/raw_close'][:]
+                # Validation hidden columns
+                if 'hidden/val/raw_close' in f:
+                    val_features['raw_close'] = f['hidden/val/raw_close'][:]
+                # Test hidden columns
+                if 'hidden/test/raw_close' in f:
+                    test_features['raw_close'] = f['hidden/test/raw_close'][:]
+
+                logger.info("Loaded hidden columns (raw_close, timestamp) for precise calculations")
+
             # Log metadata
             logger.info(f"Data created at: {f['metadata'].attrs['created_at']}")
             logger.info(f"Total features: {f['metadata'].attrs['total_features']}")
-        
+
         logger.info("Successfully loaded features")
         return train_features, val_features, test_features
 
@@ -898,6 +948,9 @@ class FeaturePipeline:
             train_data['EURUSD']['timestamp'],
             val_data['EURUSD']['timestamp'],
             test_data['EURUSD']['timestamp'],
+            train_data['EURUSD']['raw_close'],
+            val_data['EURUSD']['raw_close'],
+            test_data['EURUSD']['raw_close'],
             validation_results
         )
         
