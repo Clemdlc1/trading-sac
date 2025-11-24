@@ -5,7 +5,7 @@ SAC EUR/USD Trading System - Trading Environment
 This module implements a Gym-compatible trading environment for EUR/USD.
 
 Features:
-- Continuous action space [-1, 1] for position sizing
+- Discrete action space {0, 1, 2} mapping to {flat, long, short}
 - Risk-based position sizing (2% per trade)
 - Dynamic Stop-Loss (2×ATR) and Take-Profit (4×ATR)
 - Realistic transaction cost model (2.5-4.5 bps)
@@ -15,7 +15,7 @@ Features:
 - Complete metrics tracking
 
 Author: SAC EUR/USD Project
-Version: 2.0
+Version: 2.1
 """
 
 import logging
@@ -90,10 +90,9 @@ class TradingEnvConfig:
     n_features: int = 30
     obs_min: float = -10.0
     obs_max: float = 10.0
-    
-    # Action space
-    action_min: float = -1.0
-    action_max: float = 1.0
+
+    # Action space - Discrete: {0: flat, 1: long, 2: short}
+    n_actions: int = 3  # Discrete action space with 3 actions
 
 
 class TransactionCostModel:
@@ -546,13 +545,9 @@ class TradingEnvironment(gym.Env):
             shape=(self.config.n_features,),
             dtype=np.float32
         )
-        
-        self.action_space = spaces.Box(
-            low=self.config.action_min,
-            high=self.config.action_max,
-            shape=(1,),
-            dtype=np.float32
-        )
+
+        # Discrete action space: 0 = flat (0.0), 1 = long (1.0), 2 = short (-1.0)
+        self.action_space = spaces.Discrete(self.config.n_actions)
         
         # Components
         self.cost_model = TransactionCostModel(self.config)
@@ -591,6 +586,26 @@ class TradingEnvironment(gym.Env):
 
         logger.info(f"Trading Environment initialized with {self.total_steps} steps")
     
+    def _convert_discrete_action(self, action: int) -> float:
+        """
+        Convert discrete action to continuous action value.
+
+        Args:
+            action: Discrete action (0, 1, or 2)
+
+        Returns:
+            Continuous action value:
+            - 0 -> 0.0 (flat, no position)
+            - 1 -> 1.0 (long position)
+            - 2 -> -1.0 (short position)
+        """
+        action_mapping = {
+            0: 0.0,   # Flat
+            1: 1.0,   # Long
+            2: -1.0   # Short
+        }
+        return action_mapping.get(int(action), 0.0)
+
     def reset(self) -> np.ndarray:
         """
         Reset environment for new episode.
@@ -646,19 +661,19 @@ class TradingEnvironment(gym.Env):
         
         return obs
     
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict]:
+    def step(self, action) -> Tuple[np.ndarray, float, bool, Dict]:
         """
         Execute one step in the environment.
-        
+
         Args:
-            action: Agent action (position target)
-            
+            action: Discrete action (0, 1, or 2) from agent
+
         Returns:
             Tuple of (observation, reward, done, info)
         """
-        # Convert action to scalar
-        action = float(action[0])
-        action = np.clip(action, self.config.action_min, self.config.action_max)
+        # Convert discrete action to continuous value
+        # 0 -> 0.0 (flat), 1 -> 1.0 (long), 2 -> -1.0 (short)
+        action_continuous = self._convert_discrete_action(action)
         
         # Get current state
         idx = self.episode_start + self.current_step
@@ -697,7 +712,7 @@ class TradingEnvironment(gym.Env):
             self.equity,
             current_price,
             atr,
-            action
+            action_continuous
         )
         
         # Execute position change
