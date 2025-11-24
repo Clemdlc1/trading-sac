@@ -214,7 +214,7 @@ Avec `raw_close`, les métriques suivantes sont maintenant **précises** :
 
 ## Export CSV
 
-Les données et features sont maintenant **automatiquement exportées en CSV** avec les colonnes cachées :
+Les données, features **et logs d'entraînement** sont maintenant **automatiquement exportés en CSV** avec les colonnes cachées :
 
 ### Data Pipeline CSV
 ```
@@ -247,12 +247,29 @@ data/normalized/csv/
 - `timestamp` - Date et heure exacte
 - `raw_close` - Prix non normalisé pour PnL
 
+### Training Logs CSV (web_app)
+```
+logs/training_csv/
+  ├── training_ep5_agent0.csv
+  ├── training_ep10_agent0.csv
+  └── ... (sauvegardé tous les 5 épisodes)
+```
+
+**Colonnes dans chaque CSV :**
+- Colonnes existantes (episode, agent_id, step, action, reward, done, equity, position, etc.)
+- **30 observations** (obs_0, obs_1, ..., obs_29) - Features normalisées
+- `raw_close` - **NOUVEAU** - Prix non normalisé (ex: 1.08567 EUR/USD)
+- `timestamp` - **NOUVEAU** - Datetime exact du step (ISO format)
+
 ### Utilité des CSV
 - ✅ Inspection manuelle des données
 - ✅ Analyse avec Excel/Python externe
 - ✅ Debugging facile (lisible)
 - ✅ Vérification des calculs de PnL
 - ✅ Visualisation des prix réels vs normalisés
+- ✅ **Analyse des décisions de trading avec prix réels**
+- ✅ **Corrélation actions/conditions de marché**
+- ✅ **Validation PnL calculé vs prix réels**
 
 ## Prochaines étapes recommandées
 
