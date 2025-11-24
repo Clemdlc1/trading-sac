@@ -51,12 +51,12 @@ logger.info(f"Using device: {device}")
 @dataclass
 class SACConfig:
     """Configuration for SAC agent."""
-    
+
     # Network architecture
-    state_dim: int = 30
+    state_dim: int = 31  # 30 technical features + 1 position feature
     action_dim: int = 1
     hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
-    
+
     # Learning parameters
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
@@ -71,7 +71,7 @@ class SACConfig:
 
     # Replay buffer
     buffer_capacity: int = 100000
-    batch_size: int = 1024 
+    batch_size: int = 1024
     warmup_steps: int = 10000  # INCREASED from 1000 - agent needs MORE exploration before learning
 
     # Adaptive batch sizing
@@ -98,14 +98,14 @@ class SACConfig:
     # Progressive training
     use_curriculum: bool = True
     curriculum_threshold: int = 50  # Episodes before increasing difficulty
-    
+
     # Adaptive Normalization (AN-SAC)
     use_adaptive_norm: bool = False
     reward_scale: float = 1.0
-    
+
     # HMM support (for Agent 3)
     use_regime_qfuncs: bool = False
-    state_dim_with_regime: int = 32  # 30 + 2 regime features
+    state_dim_with_regime: int = 33  # 31 + 2 regime features
     
     # Checkpointing
     models_dir: Path = Path("models/checkpoints")
@@ -302,7 +302,7 @@ class ReplayBuffer:
         capacity: int = 100000,
         recency_weight: float = 0.00005,
         stratify_ratio: Dict[str, float] = None,
-        state_dim: int = 30,
+        state_dim: int = 31,  # 30 technical features + 1 position feature
         action_dim: int = 1
     ):
         self.capacity = capacity
@@ -1402,7 +1402,7 @@ def main():
     # Create agent
     logger.info("Creating SAC agent...")
     sac_config = SACConfig(
-        state_dim=30,
+        state_dim=31,  # 30 technical features + 1 position feature
         action_dim=1,
         gamma=0.95,
         hidden_dims=[256, 256]

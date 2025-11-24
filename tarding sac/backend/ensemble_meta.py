@@ -49,9 +49,9 @@ logger.info(f"Using device: {device}")
 @dataclass
 class MetaControllerConfig:
     """Configuration for meta-controller."""
-    
+
     # Architecture
-    state_dim: int = 30
+    state_dim: int = 31  # 30 technical features + 1 position feature
     n_agents: int = 3
     hidden_dims: List[int] = field(default_factory=lambda: [128, 64])
     
@@ -848,30 +848,30 @@ def main():
     
     # Create 3 SAC agents
     logger.info("\nCreating 3 SAC agents...")
-    
+
     # Agent 1: Short-term
     config1 = SACConfig(
-        state_dim=32,  # 30 + 2 regime features
+        state_dim=33,  # 31 + 2 regime features
         action_dim=1,
         gamma=0.93,
         hidden_dims=[256, 256]
     )
     agent1 = SACAgent(config=config1, agent_id=1)
     logger.info("Agent 1 (Short-term) created")
-    
+
     # Agent 2: Medium-term
     config2 = SACConfig(
-        state_dim=32,
+        state_dim=33,  # 31 + 2 regime features
         action_dim=1,
         gamma=0.95,
         hidden_dims=[256, 128]
     )
     agent2 = SACAgent(config=config2, agent_id=2)
     logger.info("Agent 2 (Medium-term) created")
-    
+
     # Agent 3: Swing (with regime Q-functions)
     config3 = SACConfig(
-        state_dim=30,  # No regime augmentation for Agent 3
+        state_dim=31,  # No regime augmentation for Agent 3
         action_dim=1,
         gamma=0.97,
         hidden_dims=[128, 128],
