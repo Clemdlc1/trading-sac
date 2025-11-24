@@ -212,12 +212,55 @@ Avec `raw_close`, les métriques suivantes sont maintenant **précises** :
 3. **Pas d'information supplémentaire à l'agent** - L'observation space reste identique (30 features)
 4. **Backward compatible** - Les anciens datasets fonctionnent avec fallback
 
+## Export CSV
+
+Les données et features sont maintenant **automatiquement exportées en CSV** avec les colonnes cachées :
+
+### Data Pipeline CSV
+```
+data/processed/csv/
+  ├── train/
+  │   ├── EURUSD.csv
+  │   ├── USDJPY.csv
+  │   └── ... (toutes les paires)
+  ├── val/
+  │   └── ... (mêmes paires)
+  └── test/
+      └── ... (mêmes paires)
+```
+
+**Colonnes dans chaque CSV :**
+- `timestamp` - Date et heure exacte (datetime)
+- `open`, `high`, `low`, `close` - Prix OHLC
+- `raw_close` - Prix non normalisé (identique à close)
+
+### Features CSV
+```
+data/normalized/csv/
+  ├── train_features.csv
+  ├── val_features.csv
+  └── test_features.csv
+```
+
+**Colonnes dans chaque CSV :**
+- 30 features normalisées (return_5min, rsi_14, etc.)
+- `timestamp` - Date et heure exacte
+- `raw_close` - Prix non normalisé pour PnL
+
+### Utilité des CSV
+- ✅ Inspection manuelle des données
+- ✅ Analyse avec Excel/Python externe
+- ✅ Debugging facile (lisible)
+- ✅ Vérification des calculs de PnL
+- ✅ Visualisation des prix réels vs normalisés
+
 ## Prochaines étapes recommandées
 
-1. **Régénérer les datasets** - Lancer le pipeline pour créer les nouveaux fichiers HDF5 avec `raw_close`
-2. **Vérifier les tests** - Exécuter `test_hidden_columns.py` pour valider l'implémentation
-3. **Comparer les métriques** - Entraîner un agent et comparer les métriques avant/après
-4. **Valider le PnL** - Vérifier que les calculs de PnL correspondent aux prix réels du marché
+1. **Régénérer les datasets** - Lancer le pipeline pour créer les nouveaux fichiers HDF5 et CSV avec `raw_close`
+2. **Inspecter les CSV** - Vérifier manuellement que `raw_close` et `timestamp` sont présents
+3. **Vérifier les tests** - Exécuter `test_hidden_columns.py` pour valider l'implémentation
+4. **Comparer les métriques** - Entraîner un agent et comparer les métriques avant/après
+5. **Valider le PnL** - Vérifier que les calculs de PnL correspondent aux prix réels du marché
 
 ## Conclusion
 

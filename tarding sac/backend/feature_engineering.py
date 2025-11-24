@@ -873,6 +873,63 @@ class FeaturePersistence:
         logger.info("Successfully loaded features")
         return train_features, val_features, test_features
 
+    def export_features_to_csv(
+        self,
+        train_features: pd.DataFrame,
+        val_features: pd.DataFrame,
+        test_features: pd.DataFrame,
+        output_dir: Optional[Path] = None
+    ) -> None:
+        """
+        Export normalized features with hidden columns to CSV files.
+
+        This creates CSV files with ALL columns including:
+        - 30 normalized features
+        - timestamp (raw datetime)
+        - raw_close (non-normalized price)
+
+        CSV Structure:
+        - data/normalized/csv/train_features.csv
+        - data/normalized/csv/val_features.csv
+        - data/normalized/csv/test_features.csv
+
+        Args:
+            train_features: Training features
+            val_features: Validation features
+            test_features: Test features
+            output_dir: Optional custom output directory
+        """
+        if output_dir is None:
+            output_dir = self.config.normalized_data_dir / "csv"
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"Exporting features to CSV in {output_dir}")
+
+        # Export training features
+        train_csv = output_dir / "train_features.csv"
+        train_features.to_csv(train_csv, index=False)
+        logger.info(f"  Exported train_features.csv ({len(train_features)} rows, {len(train_features.columns)} columns)")
+
+        # Export validation features
+        val_csv = output_dir / "val_features.csv"
+        val_features.to_csv(val_csv, index=False)
+        logger.info(f"  Exported val_features.csv ({len(val_features)} rows, {len(val_features.columns)} columns)")
+
+        # Export test features
+        test_csv = output_dir / "test_features.csv"
+        test_features.to_csv(test_csv, index=False)
+        logger.info(f"  Exported test_features.csv ({len(test_features)} rows, {len(test_features.columns)} columns)")
+
+        # Log column breakdown
+        visible_cols = [col for col in train_features.columns if col not in ['timestamp', 'raw_close']]
+        hidden_cols = [col for col in train_features.columns if col in ['timestamp', 'raw_close']]
+
+        logger.info(f"\n  Column breakdown:")
+        logger.info(f"    Visible features (agent sees): {len(visible_cols)}")
+        logger.info(f"    Hidden columns (calculations): {len(hidden_cols)} {hidden_cols}")
+        logger.info(f"\n  Successfully exported all features to CSV in {output_dir}")
+
 
 class FeaturePipeline:
     """Main feature engineering pipeline."""
@@ -940,7 +997,7 @@ class FeaturePipeline:
         validation_results = self.engineer.validate_features(train_features_norm)
         
         # Save features
-        logger.info("\n[4/4] Saving features to HDF5...")
+        logger.info("\n[4/5] Saving features to HDF5...")
         self.persistence.save_features_to_hdf5(
             train_features_norm,
             val_features_norm,
@@ -953,7 +1010,28 @@ class FeaturePipeline:
             test_data['EURUSD']['raw_close'],
             validation_results
         )
-        
+
+        # Create feature DataFrames with hidden columns for CSV export
+        train_features_with_hidden = train_features_norm.copy()
+        train_features_with_hidden['timestamp'] = train_data['EURUSD']['timestamp']
+        train_features_with_hidden['raw_close'] = train_data['EURUSD']['raw_close']
+
+        val_features_with_hidden = val_features_norm.copy()
+        val_features_with_hidden['timestamp'] = val_data['EURUSD']['timestamp']
+        val_features_with_hidden['raw_close'] = val_data['EURUSD']['raw_close']
+
+        test_features_with_hidden = test_features_norm.copy()
+        test_features_with_hidden['timestamp'] = test_data['EURUSD']['timestamp']
+        test_features_with_hidden['raw_close'] = test_data['EURUSD']['raw_close']
+
+        # Export to CSV
+        logger.info("\n[5/5] Exporting features to CSV with hidden columns...")
+        self.persistence.export_features_to_csv(
+            train_features_with_hidden,
+            val_features_with_hidden,
+            test_features_with_hidden
+        )
+
         # Print summary
         logger.info("\n" + "="*80)
         logger.info("Feature Engineering Complete!")
@@ -963,7 +1041,7 @@ class FeaturePipeline:
         logger.info(f"Validation samples: {len(val_features_norm)}")
         logger.info(f"Test samples: {len(test_features_norm)}")
         logger.info("="*80)
-        
+
         return train_features_norm, val_features_norm, test_features_norm
 
 

@@ -1009,6 +1009,65 @@ class DataPersistence:
         logger.info("Successfully loaded data")
         return train_data, val_data, test_data
 
+    def export_to_csv(
+        self,
+        train_data: Dict[str, pd.DataFrame],
+        val_data: Dict[str, pd.DataFrame],
+        test_data: Dict[str, pd.DataFrame],
+        output_dir: Optional[Path] = None
+    ) -> None:
+        """
+        Export processed data with hidden columns to CSV files.
+
+        This creates CSV files with ALL columns including:
+        - timestamp (raw datetime)
+        - OHLC data (open, high, low, close)
+        - raw_close (non-normalized price)
+
+        CSV Structure:
+        - data/processed/csv/train/<pair>.csv
+        - data/processed/csv/val/<pair>.csv
+        - data/processed/csv/test/<pair>.csv
+
+        Args:
+            train_data: Training data dictionary
+            val_data: Validation data dictionary
+            test_data: Test data dictionary
+            output_dir: Optional custom output directory
+        """
+        if output_dir is None:
+            output_dir = self.config.processed_data_dir / "csv"
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"Exporting data to CSV in {output_dir}")
+
+        # Export training data
+        train_dir = output_dir / "train"
+        train_dir.mkdir(exist_ok=True)
+        for pair, df in train_data.items():
+            csv_path = train_dir / f"{pair}.csv"
+            df.to_csv(csv_path, index=False)
+            logger.info(f"  Exported train/{pair}.csv ({len(df)} rows)")
+
+        # Export validation data
+        val_dir = output_dir / "val"
+        val_dir.mkdir(exist_ok=True)
+        for pair, df in val_data.items():
+            csv_path = val_dir / f"{pair}.csv"
+            df.to_csv(csv_path, index=False)
+            logger.info(f"  Exported val/{pair}.csv ({len(df)} rows)")
+
+        # Export test data
+        test_dir = output_dir / "test"
+        test_dir.mkdir(exist_ok=True)
+        for pair, df in test_data.items():
+            csv_path = test_dir / f"{pair}.csv"
+            df.to_csv(csv_path, index=False)
+            logger.info(f"  Exported test/{pair}.csv ({len(df)} rows)")
+
+        logger.info(f"Successfully exported all data to CSV in {output_dir}")
+
 
 class DataPipeline:
     """Main data pipeline orchestrator."""
@@ -1082,9 +1141,13 @@ class DataPipeline:
         train_data, val_data, test_data = self.splitter.split_data(aligned_data)
         
         # Step 6: Save to HDF5
-        logger.info("\n[6/6] Saving to HDF5...")
+        logger.info("\n[6/7] Saving to HDF5...")
         self.persistence.save_to_hdf5(train_data, val_data, test_data)
-        
+
+        # Step 7: Export to CSV (with raw_close and timestamp)
+        logger.info("\n[7/7] Exporting to CSV with hidden columns...")
+        self.persistence.export_to_csv(train_data, val_data, test_data)
+
         # Print summary
         logger.info("\n" + "="*80)
         logger.info("Data Pipeline Complete!")
@@ -1093,8 +1156,9 @@ class DataPipeline:
         logger.info(f"Validation samples: {len(next(iter(val_data.values())))}")
         logger.info(f"Test samples: {len(next(iter(test_data.values())))}")
         logger.info(f"Total pairs: {len(train_data)}")
+        logger.info(f"Columns per file: {list(next(iter(train_data.values())).columns)}")
         logger.info("="*80)
-        
+
         return train_data, val_data, test_data
     
     def get_processed_data(self) -> Tuple[Dict, Dict, Dict]:
