@@ -943,6 +943,7 @@ class DataPersistence:
                 pair_grp.create_dataset('low', data=df['low'].values, dtype='float64')
                 pair_grp.create_dataset('close', data=df['close'].values, dtype='float64')
                 # Hidden columns for precise calculations (not features)
+                pair_grp.create_dataset('raw_open', data=df['open'].values, dtype='float64')  # Non-normalized price
                 pair_grp.create_dataset('raw_close', data=df['close'].values, dtype='float64')  # Non-normalized price
 
             # Save validation data
@@ -955,6 +956,7 @@ class DataPersistence:
                 pair_grp.create_dataset('low', data=df['low'].values, dtype='float64')
                 pair_grp.create_dataset('close', data=df['close'].values, dtype='float64')
                 # Hidden columns for precise calculations (not features)
+                pair_grp.create_dataset('raw_open', data=df['open'].values, dtype='float64')  # Non-normalized price
                 pair_grp.create_dataset('raw_close', data=df['close'].values, dtype='float64')  # Non-normalized price
 
             # Save test data
@@ -967,8 +969,9 @@ class DataPersistence:
                 pair_grp.create_dataset('low', data=df['low'].values, dtype='float64')
                 pair_grp.create_dataset('close', data=df['close'].values, dtype='float64')
                 # Hidden columns for precise calculations (not features)
+                pair_grp.create_dataset('raw_open', data=df['open'].values, dtype='float64')  # Non-normalized price
                 pair_grp.create_dataset('raw_close', data=df['close'].values, dtype='float64')  # Non-normalized price
-            
+
             # Save metadata
             meta_grp = f.create_group('metadata')
             meta_grp.attrs['pairs'] = list(train_data.keys())
@@ -1017,6 +1020,11 @@ class DataPersistence:
                     'low': pair_grp['low'][:],
                     'close': pair_grp['close'][:]
                 }
+                # Load raw_open if available (for backward compatibility)
+                if 'raw_open' in pair_grp:
+                    df_dict['raw_open'] = pair_grp['raw_open'][:]
+                else:
+                    df_dict['raw_open'] = pair_grp['open'][:]  # Fallback
                 # Load raw_close if available (for backward compatibility)
                 if 'raw_close' in pair_grp:
                     df_dict['raw_close'] = pair_grp['raw_close'][:]
@@ -1034,6 +1042,11 @@ class DataPersistence:
                     'low': pair_grp['low'][:],
                     'close': pair_grp['close'][:]
                 }
+                # Load raw_open if available (for backward compatibility)
+                if 'raw_open' in pair_grp:
+                    df_dict['raw_open'] = pair_grp['raw_open'][:]
+                else:
+                    df_dict['raw_open'] = pair_grp['open'][:]  # Fallback
                 # Load raw_close if available (for backward compatibility)
                 if 'raw_close' in pair_grp:
                     df_dict['raw_close'] = pair_grp['raw_close'][:]
@@ -1051,6 +1064,11 @@ class DataPersistence:
                     'low': pair_grp['low'][:],
                     'close': pair_grp['close'][:]
                 }
+                # Load raw_open if available (for backward compatibility)
+                if 'raw_open' in pair_grp:
+                    df_dict['raw_open'] = pair_grp['raw_open'][:]
+                else:
+                    df_dict['raw_open'] = pair_grp['open'][:]  # Fallback
                 # Load raw_close if available (for backward compatibility)
                 if 'raw_close' in pair_grp:
                     df_dict['raw_close'] = pair_grp['raw_close'][:]
