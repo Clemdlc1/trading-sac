@@ -693,6 +693,9 @@ class FeaturePersistence:
         train_timestamps: pd.Series,
         val_timestamps: pd.Series,
         test_timestamps: pd.Series,
+        train_raw_open: pd.Series,
+        val_raw_open: pd.Series,
+        test_raw_open: pd.Series,
         train_raw_close: pd.Series,
         val_raw_close: pd.Series,
         test_raw_close: pd.Series,
@@ -709,12 +712,15 @@ class FeaturePersistence:
           test/
         /hidden/  <- NEW: Hidden columns not visible to agent
           train/
-            raw_close  <- Non-normalized price for precise PnL
+            raw_open   <- Non-normalized open price for trade execution
+            raw_close  <- Non-normalized close price for precise PnL
             timestamp  <- Time for precise calculations
           val/
+            raw_open
             raw_close
             timestamp
           test/
+            raw_open
             raw_close
             timestamp
         /metadata/
@@ -730,6 +736,9 @@ class FeaturePersistence:
             train_timestamps: Training timestamps
             val_timestamps: Validation timestamps
             test_timestamps: Test timestamps
+            train_raw_open: Training raw open prices (non-normalized)
+            val_raw_open: Validation raw open prices (non-normalized)
+            test_raw_open: Test raw open prices (non-normalized)
             train_raw_close: Training raw close prices (non-normalized)
             val_raw_close: Validation raw close prices (non-normalized)
             test_raw_close: Test raw close prices (non-normalized)
@@ -767,16 +776,19 @@ class FeaturePersistence:
 
             # Training hidden columns
             hidden_train_grp = hidden_grp.create_group('train')
+            hidden_train_grp.create_dataset('raw_open', data=train_raw_open.values, dtype='float64')
             hidden_train_grp.create_dataset('raw_close', data=train_raw_close.values, dtype='float64')
             hidden_train_grp.create_dataset('timestamp', data=train_timestamps.astype('int64') // 10**9)
 
             # Validation hidden columns
             hidden_val_grp = hidden_grp.create_group('val')
+            hidden_val_grp.create_dataset('raw_open', data=val_raw_open.values, dtype='float64')
             hidden_val_grp.create_dataset('raw_close', data=val_raw_close.values, dtype='float64')
             hidden_val_grp.create_dataset('timestamp', data=val_timestamps.astype('int64') // 10**9)
 
             # Test hidden columns
             hidden_test_grp = hidden_grp.create_group('test')
+            hidden_test_grp.create_dataset('raw_open', data=test_raw_open.values, dtype='float64')
             hidden_test_grp.create_dataset('raw_close', data=test_raw_close.values, dtype='float64')
             hidden_test_grp.create_dataset('timestamp', data=test_timestamps.astype('int64') // 10**9)
 
@@ -866,16 +878,22 @@ class FeaturePersistence:
             # Load hidden columns if available (for backward compatibility)
             if 'hidden' in f:
                 # Training hidden columns
+                if 'hidden/train/raw_open' in f:
+                    train_features['raw_open'] = f['hidden/train/raw_open'][:]
                 if 'hidden/train/raw_close' in f:
                     train_features['raw_close'] = f['hidden/train/raw_close'][:]
                 # Validation hidden columns
+                if 'hidden/val/raw_open' in f:
+                    val_features['raw_open'] = f['hidden/val/raw_open'][:]
                 if 'hidden/val/raw_close' in f:
                     val_features['raw_close'] = f['hidden/val/raw_close'][:]
                 # Test hidden columns
+                if 'hidden/test/raw_open' in f:
+                    test_features['raw_open'] = f['hidden/test/raw_open'][:]
                 if 'hidden/test/raw_close' in f:
                     test_features['raw_close'] = f['hidden/test/raw_close'][:]
 
-                logger.info("Loaded hidden columns (raw_close, timestamp) for precise calculations")
+                logger.info("Loaded hidden columns (raw_open, raw_close, timestamp) for precise calculations")
 
             # Log metadata
             logger.info(f"Data created at: {f['metadata'].attrs['created_at']}")
@@ -959,6 +977,9 @@ class FeaturePipeline:
             train_data['EURUSD']['timestamp'],
             val_data['EURUSD']['timestamp'],
             test_data['EURUSD']['timestamp'],
+            train_data['EURUSD']['raw_open'],
+            val_data['EURUSD']['raw_open'],
+            test_data['EURUSD']['raw_open'],
             train_data['EURUSD']['raw_close'],
             val_data['EURUSD']['raw_close'],
             test_data['EURUSD']['raw_close'],
