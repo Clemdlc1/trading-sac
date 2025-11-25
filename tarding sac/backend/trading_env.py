@@ -533,6 +533,14 @@ class TradingEnvironment(gym.Env):
 
         # Extract hidden columns for precise calculations
         # These are NOT visible to the agent (not in observation space)
+        if 'raw_open' in self.features.columns:
+            self.raw_open = self.features['raw_open'].values
+            logger.info("Using raw_open for precise trade execution")
+        else:
+            # Fallback to normalized open if raw_open not available
+            self.raw_open = self.data['open'].values
+            logger.warning("raw_open not found, using normalized open (less precise)")
+
         if 'raw_close' in self.features.columns:
             self.raw_close = self.features['raw_close'].values
             logger.info("Using raw_close for precise PnL calculations")
@@ -542,7 +550,7 @@ class TradingEnvironment(gym.Env):
             logger.warning("raw_close not found, using normalized close (less precise)")
 
         # Remove hidden columns from features (agent must not see them)
-        hidden_columns = ['raw_close', 'timestamp']
+        hidden_columns = ['raw_open', 'raw_close', 'timestamp']
         self.features = self.features.drop(columns=[col for col in hidden_columns if col in self.features.columns])
         
         # Gym spaces - Using float64 for maximum precision
@@ -703,8 +711,9 @@ class TradingEnvironment(gym.Env):
 
         # Get current state
         idx = self.episode_start + self.current_step
-        # IMPORTANT: Use raw_close for precise PnL calculations (non-normalized)
-        current_price = self.raw_close[idx]
+        # IMPORTANT: Use raw_open for trade execution (with spread), raw_close for PnL tracking
+        execution_price = self.raw_open[idx]  # Price at which trades are executed (open of current bar)
+        current_price = self.raw_close[idx]  # Price for PnL calculations (close of current bar)
         current_high = self.data.iloc[idx]['high']
         current_low = self.data.iloc[idx]['low']
         timestamp = self.data.iloc[idx]['timestamp']
@@ -744,10 +753,10 @@ class TradingEnvironment(gym.Env):
                 f"Skipping execution: maintaining position={self.position:.4f}"
             )
         else:
-            # Calculate target position
+            # Calculate target position based on execution price (open of bar)
             target_position, new_sl, new_tp = self.position_sizer.calculate_position_size(
                 self.equity,
-                current_price,
+                execution_price,
                 atr,
                 action
             )
@@ -758,19 +767,29 @@ class TradingEnvironment(gym.Env):
 
             # Case 1: Closing an existing position
             if has_position and (not wants_new_position or position_sign_change):
+                # Determine if we're buying or selling to close
+                # If we have a long position (position > 0), we sell to close (is_buying=False)
+                # If we have a short position (position < 0), we buy to close (is_buying=True)
+                is_buying_to_close = self.position < 0
+
+                # Get execution price with spread
+                exit_price_with_spread = self._get_execution_price_with_spread(
+                    execution_price, is_buying_to_close, hour, volatility
+                )
+
                 # Calculate transaction cost for closing
                 cost = self.cost_model.cost_in_dollars(
                     abs(self.position),
-                    current_price,
+                    exit_price_with_spread,
                     hour,
                     volatility
                 )
 
                 # Close the position
-                pnl = self._close_position(current_price, hour, volatility)
+                pnl = self._close_position(exit_price_with_spread, hour, volatility)
                 self.trades.append({
                     'entry_price': self.entry_price,
-                    'exit_price': current_price,
+                    'exit_price': exit_price_with_spread,
                     'position': self.position,
                     'pnl': pnl,
                     'type': 'Normal',
@@ -793,17 +812,27 @@ class TradingEnvironment(gym.Env):
 
             # Case 2: Opening a new position (only when currently flat)
             elif not has_position and wants_new_position:
+                # Determine if we're buying or selling to open
+                # If target position is positive (long), we buy (is_buying=True)
+                # If target position is negative (short), we sell (is_buying=False)
+                is_buying_to_open = target_position > 0
+
+                # Get execution price with spread
+                entry_price_with_spread = self._get_execution_price_with_spread(
+                    execution_price, is_buying_to_open, hour, volatility
+                )
+
                 # Calculate transaction cost for opening
                 cost = self.cost_model.cost_in_dollars(
                     abs(target_position),
-                    current_price,
+                    entry_price_with_spread,
                     hour,
                     volatility
                 )
 
                 # Open new position
                 self.position = target_position
-                self.entry_price = current_price
+                self.entry_price = entry_price_with_spread
                 self.sl_price = new_sl
                 self.tp_price = new_tp
                 self.equity -= cost
@@ -811,7 +840,7 @@ class TradingEnvironment(gym.Env):
 
                 logger.debug(
                     f"New position opened: size={self.position:.4f}, "
-                    f"entry={current_price:.5f}, SL={new_sl:.5f}, TP={new_tp:.5f}"
+                    f"entry={entry_price_with_spread:.5f}, SL={new_sl:.5f}, TP={new_tp:.5f}"
                 )
         
         # Update equity based on unrealized P&L
@@ -986,14 +1015,53 @@ class TradingEnvironment(gym.Env):
         
         return sl_hit, tp_hit
     
+    def _get_execution_price_with_spread(self, base_price: float, is_buying: bool, hour: int, volatility: float) -> float:
+        """
+        Calculate execution price with spread applied.
+
+        When buying (opening long or closing short): pay the ask = base_price + spread
+        When selling (opening short or closing long): receive the bid = base_price - spread
+
+        Args:
+            base_price: Base price (raw_open)
+            is_buying: True if buying, False if selling
+            hour: Hour of day for spread calculation
+            volatility: Current volatility
+
+        Returns:
+            Execution price with spread
+        """
+        # Calculate spread in basis points (we use reduced spread for execution)
+        # Use the base_spread from config (already reduced to 0.1 bps)
+        spread_bps = self.config.base_spread
+
+        # Adjust spread by session (same logic as TransactionCostModel)
+        if 13 <= hour < 16:  # London/NY overlap - tighter spreads
+            spread_bps = spread_bps
+        elif hour >= 23 or hour < 7:  # Asian session - wider spreads
+            spread_bps = spread_bps * 1.5
+        else:
+            spread_bps = spread_bps * 1.2
+
+        # Convert basis points to price change (1 bp = 0.0001 for EURUSD)
+        spread_price = (spread_bps / 10000.0) * base_price
+
+        # Apply spread
+        if is_buying:
+            # Buying: pay the ask (higher price)
+            return base_price + spread_price
+        else:
+            # Selling: receive the bid (lower price)
+            return base_price - spread_price
+
     def _calculate_unrealized_pnl(self, current_price: float) -> float:
         """Calculate unrealized P&L."""
         if abs(self.position) < 1e-6:
             return 0.0
-        
+
         price_change = current_price - self.entry_price
         pnl = self.position * 100000 * price_change  # 1 lot = 100,000 EUR
-        
+
         return pnl
     
     def _close_position(self, exit_price: float, hour: int, volatility: float) -> float:
