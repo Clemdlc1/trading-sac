@@ -47,12 +47,12 @@ class TradingEnvConfig:
 
     # Position sizing - ULTRA CONSERVATIVE: 2× leverage, 0.1% risk
     risk_per_trade: float = 0.001  # 0.1% risk per trade (halved from 0.2%)
-    max_leverage: float = 2.0  # 2× maximum - extremely safe
+    max_leverage: float = 3.0  # 3× maximum - extremely safe
     min_position_size: float = 0.01  # Minimum lot size
-
+    
     # Stop-Loss and Take-Profit - ÉLARGI pour laisser respirer le trade
-    sl_atr_multiplier: float = 3.0  # SL = 3×ATR (augmenté de 2.0)
-    tp_atr_multiplier: float = 6.0  # TP = 6×ATR (augmenté proportionnellement)
+    sl_atr_multiplier: float = 2.0  # SL = 3×ATR (augmenté de 2.0)
+    tp_atr_multiplier: float = 4.0  # TP = 6×ATR (augmenté proportionnellement)
 
     # Transaction costs (basis points) - RÉDUITS pour l'apprentissage
     # Vous remettrez les coûts réels lors du fine-tuning
@@ -74,8 +74,8 @@ class TradingEnvConfig:
     no_trading_warmup_steps: int = 9000  # First 10k steps: ZERO trading, buffer filling phase
     
     # Reward function parameters
-    dense_weight: float = 0.90  # INCREASED from 0.40 - more immediate feedback
-    terminal_weight: float = 0.10  # DECREASED from 0.60 - less delayed signal
+    dense_weight: float = 1.0  # INCREASED from 0.40 - more immediate feedback
+    terminal_weight: float = 0.0  # DECREASED from 0.60 - less delayed signal
 
     # Reward scaling to improve learning signal
     reward_scale: float = 5.0  # Scale up rewards for better gradients
