@@ -56,9 +56,9 @@ class TradingEnvConfig:
 
     # Transaction costs (basis points) - RÉDUITS pour l'apprentissage
     # Vous remettrez les coûts réels lors du fine-tuning
-    base_spread: float = 0.1  # 0.1 bps base spread (réduit de 0.5)
-    slippage_baseline: float = 0.1  # 0.1 bps baseline slippage (réduit de 1.5)
-    market_impact_base: float = 0.1  # 0.1 bps market impact (réduit de 1.0)
+    base_spread: float = 0.0  # 0.1 bps base spread (réduit de 0.5)
+    slippage_baseline: float = 0.0  # 0.1 bps baseline slippage (réduit de 1.5)
+    market_impact_base: float = 0.0  # 0.1 bps market impact (réduit de 1.0)
     
     # Risk management
     margin_call_threshold: float = 0.20  # 20% of initial capital
@@ -78,7 +78,7 @@ class TradingEnvConfig:
     terminal_weight: float = 0.0  # DECREASED from 0.60 - less delayed signal
 
     # Reward scaling to improve learning signal
-    reward_scale: float = 5.0  # Scale up rewards for better gradients
+    reward_scale: float = 350.0  # Scale up rewards for better gradients
 
     # DSR parameters (Differential Sharpe Ratio)
     dsr_eta: float = 0.01  # INCREASED from 0.001 for faster adaptation
@@ -326,11 +326,7 @@ class RewardCalculator:
                 log_return = np.log(equity_t / equity_t_minus_1)
             else:
                 log_return = 0.0
-
-            # Reward simple : rendement pur
-            dense_reward = log_return * 10.0  # Scale up pour que ce soit ~1.0
-
-            return dense_reward
+            return log_return
 
         # ==================== RÉCOMPENSE COMPLEXE (DÉSACTIVÉE) ====================
         # Component 1: Returns (30%)
@@ -409,13 +405,7 @@ class RewardCalculator:
         Returns:
             Terminal reward value
         """
-        if len(returns_episode) < 10:
-            return -1.0  # Penalty for too short episode
-
-        # CRITICAL FIX: Penalize agents that don't trade
-        if len(trades) < 5:
-            return -5.0  # Strong penalty for insufficient trading activity
-        
+                
         returns_array = np.array(returns_episode)
         
         # Component 1: Sortino Ratio (35%)
@@ -702,11 +692,13 @@ class TradingEnvironment(gym.Env):
 
         # Case 2: Flat position - require minimum threshold to enter
         elif abs(action) < self.config.min_entry_threshold:
-            # Action too weak to enter position
+            # CORRECTION: Clipper l'action à 0 pour éviter le distributional shift
+            # L'agent apprendra explicitement que action proche de 0 = rester flat
+            action = 0.0
             should_skip_execution = True
             logger.debug(
                 f"Anti-overtrading: Action {original_action:.4f} below threshold "
-                f"{self.config.min_entry_threshold}, staying flat (prevents weak entries)"
+                f"{self.config.min_entry_threshold}, clipped to 0 (prevents weak entries)"
             )
 
         # Get current state
@@ -821,6 +813,9 @@ class TradingEnvironment(gym.Env):
                 entry_price_with_spread = self._get_execution_price_with_spread(
                     execution_price, is_buying_to_open, hour, volatility
                 )
+
+                # TODO: Désactiver le spread pour l'ouverture
+                entry_price_with_spread = execution_price  # TEMPORAIRE: Désactiver le spread pour l'ouverture
 
                 # Calculate transaction cost for opening
                 cost = self.cost_model.cost_in_dollars(
@@ -941,7 +936,8 @@ class TradingEnvironment(gym.Env):
             'terminal_reward': terminal_reward,
             'transaction_cost': cost,
             'current_step': self.current_step,
-            'drawdown': current_dd
+            'drawdown': current_dd,
+            'effective_action': action  # NOUVEAU: Action après anti-overtrading (pour le buffer)
         }
         
         return obs, total_reward, done, info
@@ -950,7 +946,7 @@ class TradingEnvironment(gym.Env):
         """
         Get current observation (features + position).
 
-        IMPORTANT: Returns 30 normalized features + 1 position feature (total: 31).
+        IMPORTANT: Returns 29 normalized features + 1 position feature (total: 30).
         Hidden columns (raw_close, timestamp) are NOT included in observations.
         Position feature allows agent to be aware of current position and avoid overtrading.
         """

@@ -899,7 +899,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
             sac_config = SACConfig(
                 state_dim=30,  # 29 technical features + 1 position feature,
                 action_dim=1,
-                hidden_dims=[256, 256]
+                hidden_dims=[512, 512, 512]
             )
             agent = SACAgent(config=sac_config, agent_id=agent_id)
             if from_checkpoint:
@@ -914,7 +914,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                 sac_config = SACConfig(
                     state_dim=30,  # 29 technical features + 1 position feature,
                     action_dim=1,
-                    hidden_dims=[256, 256]
+                    hidden_dims=[512, 512, 512]
                 )
                 # Use agent_id >= 3 to avoid regime feature requirements
                 agent = SACAgent(config=sac_config, agent_id=i+3)
@@ -1080,7 +1080,9 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                         current_idx = env.episode_start + env.current_step - 1  # -1 because step was already incremented
 
                         # Get raw_close and timestamp from hidden columns
-                        raw_close = float(env.raw_close[current_idx]) if hasattr(env, 'raw_close') else float(info.get('equity', 0)) / 100000.0
+                        raw_close = float(env.raw_close[current_idx]) if hasattr(env, 'raw_close') else 0.0
+                        raw_open = float(env.raw_open[current_idx]) if hasattr(env, 'raw_open') else 0.0
+
                         timestamp = env.data.iloc[current_idx]['timestamp'] if current_idx < len(env.data) else datetime.now()
 
                         transition_data = {
@@ -1095,6 +1097,7 @@ def run_training(num_episodes: int, batch_size: int, from_checkpoint: Optional[s
                             'cumulative_reward': episode_reward + reward,
                             'episode_start_time': episode_start_time.isoformat(),
                             # Hidden columns for precise analysis
+                            'raw_open': raw_open,  # Non-normalized price
                             'raw_close': raw_close,  # Non-normalized price
                             'timestamp': timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)  # Exact datetime
                         }
@@ -1511,7 +1514,7 @@ def run_meta_controller_training(num_episodes: int, batch_size: int):
             sac_config = SACConfig(
                 state_dim=30,  # 29 technical features + 1 position feature,
                 action_dim=1,
-                hidden_dims=[256, 256]
+                hidden_dims=[512, 512, 512]
             )
             agent = SACAgent(config=sac_config, agent_id=i+3)
 
@@ -1885,7 +1888,7 @@ def run_validation_process(validator: ValidationFramework, model_path: str):
         sac_config = SACConfig(
             state_dim=30,  # 29 technical features + 1 position feature,
             action_dim=1,
-            hidden_dims=[256, 256]
+            hidden_dims=[512, 512, 512]
         )
         agent = SACAgent(config=sac_config, agent_id=1)
         agent.load(model_path)

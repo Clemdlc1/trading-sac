@@ -55,13 +55,13 @@ class SACConfig:
     # Network architecture
     state_dim: int = 30  # 29 technical features + 1 position feature
     action_dim: int = 1
-    hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
+    hidden_dims: List[int] = field(default_factory=lambda: [512, 512, 512])
 
     # Learning parameters
-    actor_lr: float = 3e-4
-    critic_lr: float = 3e-4
-    alpha_lr: float = 3e-4
-    gamma: float = 0.95
+    actor_lr: float = 1e-4
+    critic_lr: float = 1e-4
+    alpha_lr: float = 1e-5
+    gamma: float = 0.97
     tau: float = 0.005
 
     # Learning rate scheduling
@@ -70,7 +70,7 @@ class SACConfig:
     min_lr: float = 1e-5  # Minimum learning rate
 
     # Replay buffer
-    buffer_capacity: int = 100000
+    buffer_capacity: int = 1000000
     batch_size: int = 1024
     warmup_steps: int = 9000  # INCREASED from 1000 - agent needs MORE exploration before learning
 
@@ -80,32 +80,32 @@ class SACConfig:
     adaptive_batch_threshold: int = 9000  # Buffer size to reach full batch_size
 
     # Regularization
-    weight_decay: float = 1e-3
-    actor_dropout: float = 0.03  # REDUCED from 0.1 to 0.05
-    critic_dropout: float = 0.05  # REDUCED from 0.2 to 0.1
+    weight_decay: float = 1e-2
+    actor_dropout: float = 0.05  # REDUCED from 0.1 to 0.05
+    critic_dropout: float = 0.1  # REDUCED from 0.2 to 0.1
 
     # Entropy tuning
     auto_entropy_tuning: bool = True
-    target_entropy: float = -0.5  # -dim(A)/2 = -0.5 for 1D action space
-    min_alpha: float = 0.15  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
+    target_entropy: float = -0.5  # -action_dim
+    min_alpha: float = 0.01  # NOUVEAU: Empêcher alpha de tomber à 0 (effondrement d'entropie)
     use_adaptive_entropy: bool = False  # Gradually reduce target entropy over training
     entropy_decay_steps: int = 100000  # Steps over which to decay entropy target
 
     # Training
     update_ratio: float = 2.0  # 1 gradient update per env step
-    max_grad_norm: float = 2.0  # INCREASED from 1.0 to 2.0
+    max_grad_norm: float = 5.0  # INCREASED from 1.0 to 2.0
 
     # Progressive training
     use_curriculum: bool = True
     curriculum_threshold: int = 50  # Episodes before increasing difficulty
 
     # Adaptive Normalization (AN-SAC)
-    use_adaptive_norm: bool = False
+    use_adaptive_norm: bool = True
     reward_scale: float = 1.0
 
     # HMM support (for Agent 3)
     use_regime_qfuncs: bool = False
-    state_dim_with_regime: int = 31  # 29 + 2 regime features
+    state_dim_with_regime: int = 30  # 29 + 2 regime features
     
     # Checkpointing
     models_dir: Path = Path("models/checkpoints")
@@ -149,9 +149,9 @@ class Actor(nn.Module):
         input_dim = state_dim
         
         for hidden_dim in hidden_dims:
-            # Spectral Normalized Linear
-            layers.append(SpectralNormLinear(input_dim, hidden_dim))
-            # Layer Normalization
+            # Linear standard (PAS de Spectral Norm pour l'Actor!)
+            layers.append(nn.Linear(input_dim, hidden_dim))
+            # Layer Normalization (garder)
             layers.append(nn.LayerNorm(hidden_dim))
             # Activation
             layers.append(nn.ReLU())
@@ -164,10 +164,15 @@ class Actor(nn.Module):
         # Output heads (no spectral norm on output)
         self.mean_head = nn.Linear(input_dim, action_dim)
         self.log_std_head = nn.Linear(input_dim, action_dim)
-        
+
+        # NOUVEAU: Initialiser log_std pour commencer avec moins d'exploration
+        # log_std = -1.0 → std = exp(-1) ≈ 0.37 (raisonnable pour actions [-1, 1])
+        nn.init.constant_(self.log_std_head.bias, -1.0)
+        nn.init.zeros_(self.log_std_head.weight)  # Poids à 0 pour que le biais domine au début
+
         # Log std bounds
-        self.log_std_min = -20
-        self.log_std_max = 2
+        self.log_std_min = -5.0   # exp(-5) ≈ 0.007 (quasi déterministe)
+        self.log_std_max = -1.0   # BLOQUÉ à init=-1.0, l'Actor ne peut QUE baisser log_std
     
     def forward(
         self,
@@ -308,9 +313,9 @@ class ReplayBuffer:
         self.capacity = capacity
         self.recency_weight = recency_weight
         self.stratify_ratio = stratify_ratio or {
-            'winning': 0.3,
-            'losing': 0.3,
-            'neutral': 0.4
+            'winning': 0.25,
+            'losing': 0.25,
+            'neutral': 0.5
         }
 
         # Pre-allocated numpy arrays for better memory locality
@@ -399,9 +404,9 @@ class ReplayBuffer:
         neutral_indices = [i for i in self.neutral_indices if i < self.size]
         
         # Calculer combien de chaque type on veut
-        target_win = int(batch_size * 0.40)
-        target_lose = int(batch_size * 0.40)
-        target_neutral = batch_size - target_win - target_lose  # Le reste (20%)
+        target_win = int(batch_size * self.stratify_ratio['winning'])
+        target_lose = int(batch_size * self.stratify_ratio['losing'])
+        target_neutral = batch_size - target_win - target_lose
         
         # Sample de chaque catégorie (avec replacement si pas assez)
         selected_indices = []
@@ -672,7 +677,7 @@ class SACAgent:
         if self.config.auto_entropy_tuning:
             self.target_entropy = self.config.target_entropy
             self.initial_target_entropy = self.config.target_entropy  # Store initial value
-            self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
+            self.log_alpha = torch.tensor([-3.0], requires_grad=True, device=device)
             self.alpha_optimizer = optim.Adam([self.log_alpha], lr=self.config.alpha_lr)
             self.alpha = self.log_alpha.exp()
         else:
@@ -837,7 +842,7 @@ class SACAgent:
         )
         
         # ✅ AJOUTER ICI - Early stopping pour gradients explosifs
-        if critic_metrics['critic_grad_norm'] > 50.0:
+        if critic_metrics['critic_grad_norm'] > 200.0:
             logger.warning(
                 f"⚠️ Critic gradient explosion! "
                 f"Norm={critic_metrics['critic_grad_norm']:.2f}. "
@@ -970,6 +975,8 @@ class SACAgent:
                     target_q = torch.min(target_q1, target_q2)
                     target_q = target_q - self.alpha * next_log_probs
                     target_q = rewards + (1 - dones) * self.config.gamma * target_q
+                    target_q = torch.clamp(target_q, -50.0, 50.0)
+
             else:
                 next_actions, next_log_probs = self.actor.sample(next_states)
 
@@ -987,6 +994,8 @@ class SACAgent:
                 target_q = torch.min(target_q1, target_q2)
                 target_q = target_q - self.alpha * next_log_probs
                 target_q = rewards + (1 - dones) * self.config.gamma * target_q
+                target_q = torch.clamp(target_q, -50.0, 50.0)
+
 
         # Forward pass with mixed precision
         self.critic_optimizer.zero_grad()
@@ -1011,8 +1020,8 @@ class SACAgent:
                 td_error = (current_q1 - target_q).abs()
                 td_error_mean = td_error.mean().item()
 
-                critic1_loss = F.mse_loss(current_q1, target_q)
-                critic2_loss = F.mse_loss(current_q2, target_q)
+                critic1_loss = F.smooth_l1_loss(current_q1, target_q)
+                critic2_loss = F.smooth_l1_loss(current_q2, target_q)
                 critic_loss = critic1_loss + critic2_loss
 
             # Backward with gradient scaling
@@ -1057,8 +1066,8 @@ class SACAgent:
             td_error = (current_q1 - target_q).abs()
             td_error_mean = td_error.mean().item()
 
-            critic1_loss = F.mse_loss(current_q1, target_q)
-            critic2_loss = F.mse_loss(current_q2, target_q)
+            critic1_loss = F.smooth_l1_loss(current_q1, target_q)
+            critic2_loss = F.smooth_l1_loss(current_q2, target_q)
             critic_loss = critic1_loss + critic2_loss
 
             critic_loss.backward()
@@ -1180,18 +1189,18 @@ class SACAgent:
 
             if self.use_amp:
                 with torch.cuda.amp.autocast():
-                    alpha_loss = (self.log_alpha.exp() * (log_probs + self.target_entropy).detach()).mean()
+                    alpha_loss = -(self.log_alpha.exp() * (log_probs + self.target_entropy).detach()).mean()
 
                 self.scaler.scale(alpha_loss).backward()
                 self.scaler.step(self.alpha_optimizer)
             else:
-                alpha_loss = (self.log_alpha.exp() * (log_probs + self.target_entropy).detach()).mean()
+                alpha_loss = -(self.log_alpha.exp() * (log_probs + self.target_entropy).detach()).mean()
                 alpha_loss.backward()
                 self.alpha_optimizer.step()
 
             # AJOUT: Clamper log_alpha pour éviter l'effondrement d'entropie
             # Empêche alpha de tomber à 0 (ce qui causerait une politique déterministe)
-            self.log_alpha.data.clamp_(min=-3.0, max=2.0)  # exp(-5) ≈ 0.0067, exp(1) ≈ 2.718
+            self.log_alpha.data.clamp_(min=-5.0, max=2.0)  # exp(-5) ≈ 0.0067, exp(1) ≈ 2.718
             self.alpha = self.log_alpha.exp()
 
             # Forcer un alpha minimum si besoin
@@ -1404,8 +1413,8 @@ def main():
     sac_config = SACConfig(
         state_dim=30,  # 29 technical features + 1 position feature
         action_dim=1,
-        gamma=0.95,
-        hidden_dims=[256, 256]
+        gamma=0.97,
+        hidden_dims=[512, 512, 512]
     )
     agent = SACAgent(config=sac_config, agent_id=1)
     
