@@ -87,7 +87,7 @@ class TradingEnvConfig:
     use_simple_reward: bool = True  # True = PnL pur, False = récompense complexe
     
     # Observation space
-    n_features: int = 30  # 29 technical features + 1 position feature
+    n_features: int = 32  # 31 technical features + 1 position feature (ajout ADX + ATR Ratio)
     obs_min: float = -10.0
     obs_max: float = 10.0
 
@@ -100,6 +100,18 @@ class TradingEnvConfig:
     # Action space
     action_min: float = -1.0
     action_max: float = 1.0
+
+    # ==================== ORACLE + INERTIA SYSTEM ====================
+    # Nouveaux paramètres pour le système Oracle + Inertie
+    use_oracle_reward: bool = True  # Active le nouveau mode de calcul
+    reward_horizon: int = 48  # Fenêtre de vision future (4 heures en barres 5min)
+    inertia_threshold: float = 0.05  # Seuil de tolérance au changement (5%)
+    inertia_position_threshold: float = 0.10  # Position en-dessous de laquelle l'inertie ne s'applique pas
+    tp_atr_multiple: float = 4.0  # Distance TP = 4 × ATR
+    sl_atr_multiple: float = 2.0  # Distance SL = 2 × ATR
+    oracle_decay_lambda: float = 0.05  # Taux de décroissance exponentielle (demi-vie ≈ 14 barres)
+    oracle_drawdown_penalty: float = 2.0  # Coefficient de pénalité pour le drawdown latent
+    reward_scaling_factor: float = 5.0  # Facteur multiplicatif final
 
 
 class TransactionCostModel:
@@ -595,6 +607,179 @@ class TradingEnvironment(gym.Env):
 
         logger.info(f"Trading Environment initialized with {self.total_steps} steps")
     
+    def _calculate_oracle_signal(self, idx: int, atr: float, entry_price: float, action_sign: int) -> float:
+        """
+        Calcule le signal Oracle basé sur la vision future de 48 barres.
+
+        Le signal Oracle détermine la "vérité du marché" en analysant ce qui se passe
+        dans les 48 prochaines barres (4 heures).
+
+        Args:
+            idx: Index actuel dans les données
+            atr: ATR actuel
+            entry_price: Prix d'entrée
+            action_sign: Signe de l'action (+1 pour LONG, -1 pour SHORT, 0 pour FLAT)
+
+        Returns:
+            Signal Oracle dans [-2.0, +2.0]
+        """
+        if action_sign == 0:
+            return 0.0  # Pas de position, pas de signal
+
+        horizon = self.config.reward_horizon
+        max_idx = len(self.raw_close)
+
+        # Limiter l'horizon si on est proche de la fin
+        effective_horizon = min(horizon, max_idx - idx - 1)
+        if effective_horizon < 10:  # Pas assez de données futures
+            return 0.0
+
+        # Calculer les seuils TP/SL
+        tp_distance = self.config.tp_atr_multiple * atr
+        sl_distance = self.config.sl_atr_multiple * atr
+
+        if action_sign > 0:  # LONG
+            price_tp = entry_price + tp_distance
+            price_sl = entry_price - sl_distance
+        else:  # SHORT
+            price_tp = entry_price - tp_distance
+            price_sl = entry_price + sl_distance
+
+        # Scanner les barres futures
+        first_tp_hit = None
+        first_sl_hit = None
+
+        for t in range(1, effective_horizon + 1):
+            future_idx = idx + t
+            if future_idx >= max_idx:
+                break
+
+            high = self.data.iloc[future_idx]['high']
+            low = self.data.iloc[future_idx]['low']
+
+            if action_sign > 0:  # LONG
+                # Vérifier SL d'abord (plus conservateur)
+                if low <= price_sl and first_sl_hit is None:
+                    first_sl_hit = t
+                # Vérifier TP
+                if high >= price_tp and first_tp_hit is None:
+                    first_tp_hit = t
+            else:  # SHORT
+                # Vérifier SL d'abord
+                if high >= price_sl and first_sl_hit is None:
+                    first_sl_hit = t
+                # Vérifier TP
+                if low <= price_tp and first_tp_hit is None:
+                    first_tp_hit = t
+
+            # Arrêter si on a touché les deux
+            if first_tp_hit is not None and first_sl_hit is not None:
+                break
+
+        # CAS 1 : TP touché avant SL (victoire nette)
+        if first_tp_hit is not None and (first_sl_hit is None or first_tp_hit < first_sl_hit):
+            bonus_vitesse = 1.0 + (1.0 - first_tp_hit / effective_horizon)
+            signal = action_sign * 1.0 * bonus_vitesse
+            return np.clip(signal, -2.0, 2.0)
+
+        # CAS 2 : SL touché avant TP (défaite nette)
+        if first_sl_hit is not None and (first_tp_hit is None or first_sl_hit < first_tp_hit):
+            malus_vitesse = 1.0 + 0.5 * (1.0 - first_sl_hit / effective_horizon)
+            signal = -action_sign * 1.0 * malus_vitesse
+            return np.clip(signal, -2.0, 2.0)
+
+        # CAS 3 : Zone grise (ni TP ni SL touché)
+        # Calculer un score de qualité nuancé
+        weighted_pnl = 0.0
+        weight_sum = 0.0
+        max_drawdown = 0.0
+
+        for t in range(1, effective_horizon + 1):
+            future_idx = idx + t
+            if future_idx >= max_idx:
+                break
+
+            close_price = self.raw_close[future_idx]
+            low_price = self.data.iloc[future_idx]['low']
+
+            # Poids exponentiels décroissants
+            weight = np.exp(-self.config.oracle_decay_lambda * t)
+
+            # PnL normalisé
+            pnl_raw = (close_price - entry_price) * action_sign
+            pnl_normalized = pnl_raw / tp_distance
+
+            weighted_pnl += weight * pnl_normalized
+            weight_sum += weight
+
+            # Drawdown (pour LONG, c'est la baisse max ; pour SHORT, c'est la hausse max)
+            if action_sign > 0:  # LONG
+                dd = (entry_price - low_price) / tp_distance
+            else:  # SHORT
+                dd = (low_price - entry_price) / tp_distance
+
+            max_drawdown = max(max_drawdown, dd)
+
+        # Score base
+        if weight_sum > 0:
+            score_base = weighted_pnl / weight_sum
+        else:
+            score_base = 0.0
+
+        # Pénalité de drawdown
+        score_final = score_base - self.config.oracle_drawdown_penalty * max_drawdown
+
+        # Clipper à [-0.8, +0.8] pour zone grise
+        signal = np.clip(score_final, -0.8, 0.8)
+
+        return signal
+
+    def _apply_inertia_filter(self, action_raw: float, position_current: float) -> float:
+        """
+        Applique le filtre d'inertie pour éliminer les micro-ajustements.
+
+        L'action de l'agent n'est plus un ordre direct mais une cible d'exposition.
+        Le système filtre les micro-ajustements pour éliminer le "tremblement" des réseaux de neurones.
+
+        Args:
+            action_raw: Action brute de l'agent [-1, +1]
+            position_current: Position actuelle [-1, +1]
+
+        Returns:
+            Action effective après application du filtre
+        """
+        # Calculer le delta
+        delta = action_raw - position_current
+
+        # CAS A : Position actuelle quasi-flat (|position_actuelle| < 0.10)
+        # L'agent doit pouvoir entrer librement en position
+        if abs(position_current) < self.config.inertia_position_threshold:
+            return action_raw
+
+        # CAS B : L'agent veut fermer (|action_brute| < 0.05)
+        # La sortie doit être immédiate et précise
+        if abs(action_raw) < self.config.inertia_threshold:
+            return 0.0
+
+        # CAS C : Renversement de position (signe(action_brute) ≠ signe(position_actuelle))
+        # Un changement de direction est une décision majeure
+        if np.sign(action_raw) != np.sign(position_current) and action_raw != 0 and position_current != 0:
+            return action_raw
+
+        # CAS D : Ajustement en position (|position_actuelle| ≥ 0.10 ET même direction)
+        # Si |Δ| < inertia_threshold (0.05) : Inertie ACTIVÉE
+        if abs(position_current) >= self.config.inertia_position_threshold:
+            if abs(delta) < self.config.inertia_threshold:
+                # Inertie activée : maintenir la position actuelle
+                logger.debug(
+                    f"Inertie activée: delta={delta:.4f} < threshold={self.config.inertia_threshold}, "
+                    f"maintien position={position_current:.4f}"
+                )
+                return position_current
+
+        # Sinon, appliquer l'action brute
+        return action_raw
+
     def reset(self) -> np.ndarray:
         """
         Reset environment for new episode.
@@ -631,6 +816,7 @@ class TradingEnvironment(gym.Env):
         self.entry_price = 0.0
         self.sl_price = 0.0
         self.tp_price = 0.0
+        self.last_action_effective = 0.0  # Pour le filtre d'inertie
         
         # Reset tracking
         self.equity_curve = [self.equity]
@@ -661,45 +847,19 @@ class TradingEnvironment(gym.Env):
             Tuple of (observation, reward, done, info)
         """
         # Convert action to scalar
-        action = float(action[0])
-        action = np.clip(action, self.config.action_min, self.config.action_max)
+        action_raw = float(action[0])
+        action_raw = np.clip(action_raw, self.config.action_min, self.config.action_max)
 
-        # NEW ANTI-OVERTRADING LOGIC:
-        # 1. If long position (position > 0): only actions <= 0 can close it (no reinforcement)
-        # 2. If short position (position < 0): only actions >= 0 can close it (no reinforcement)
-        # 3. Minimum threshold of 0.2 to enter new position when flat
-        # 4. Position size scales with action strength above threshold
+        # Appliquer le filtre d'inertie (système Oracle + Inertie)
+        # La position est normalisée pour le filtre (on utilise directement action_raw comme proxy)
+        # Dans ce système, on stocke la dernière action effective comme "target_position"
+        if not hasattr(self, 'last_action_effective'):
+            self.last_action_effective = 0.0
 
-        original_action = action
-        should_skip_execution = False  # Flag to skip position changes
+        action_effective = self._apply_inertia_filter(action_raw, self.last_action_effective)
 
-        # Case 1: Already in a position - prevent reinforcement
-        if abs(self.position) > 1e-6:
-            if self.position > 0 and action > 0:
-                # Long position: reject positive actions (would reinforce)
-                should_skip_execution = True
-                logger.debug(
-                    f"Anti-overtrading: Rejecting positive action {original_action:.4f} "
-                    f"while in long position {self.position:.4f} (prevents reinforcement, holding)"
-                )
-            elif self.position < 0 and action < 0:
-                # Short position: reject negative actions (would reinforce)
-                should_skip_execution = True
-                logger.debug(
-                    f"Anti-overtrading: Rejecting negative action {original_action:.4f} "
-                    f"while in short position {self.position:.4f} (prevents reinforcement, holding)"
-                )
-
-        # Case 2: Flat position - require minimum threshold to enter
-        elif abs(action) < self.config.min_entry_threshold:
-            # CORRECTION: Clipper l'action à 0 pour éviter le distributional shift
-            # L'agent apprendra explicitement que action proche de 0 = rester flat
-            action = 0.0
-            should_skip_execution = True
-            logger.debug(
-                f"Anti-overtrading: Action {original_action:.4f} below threshold "
-                f"{self.config.min_entry_threshold}, clipped to 0 (prevents weak entries)"
-            )
+        # Mise à jour de l'action effective pour le prochain step
+        self.last_action_effective = action_effective
 
         # Get current state
         idx = self.episode_start + self.current_step
@@ -735,108 +895,102 @@ class TradingEnvironment(gym.Env):
             self.sl_price = 0.0
             self.tp_price = 0.0
         
-        # Execute position change with NEW ANTI-OVERTRADING RULES
+        # Execute position change avec le système Oracle + Inertie
         cost = 0.0
 
-        # Check if we should skip execution due to anti-overtrading rules
-        if should_skip_execution:
-            # Skip execution, maintain current position
+        # Calculate target position based on action_effective
+        target_position, new_sl, new_tp = self.position_sizer.calculate_position_size(
+            self.equity,
+            execution_price,
+            atr,
+            action_effective
+        )
+
+        # Determine if we're closing a position
+        has_position = abs(self.position) > 1e-6
+        wants_new_position = abs(target_position) > 1e-6
+        position_sign_change = (self.position * target_position) < 0  # Signs are different
+
+        # Case 1: Closing an existing position
+        if has_position and (not wants_new_position or position_sign_change):
+            # Determine if we're buying or selling to close
+            # If we have a long position (position > 0), we sell to close (is_buying=False)
+            # If we have a short position (position < 0), we buy to close (is_buying=True)
+            is_buying_to_close = self.position < 0
+
+            # Get execution price with spread
+            exit_price_with_spread = self._get_execution_price_with_spread(
+                execution_price, is_buying_to_close, hour, volatility
+            )
+
+            # Calculate transaction cost for closing
+            cost = self.cost_model.cost_in_dollars(
+                abs(self.position),
+                exit_price_with_spread,
+                hour,
+                volatility
+            )
+
+            # Close the position
+            pnl = self._close_position(exit_price_with_spread, hour, volatility)
+            self.trades.append({
+                'entry_price': self.entry_price,
+                'exit_price': exit_price_with_spread,
+                'position': self.position,
+                'pnl': pnl,
+                'type': 'Normal',
+                'step': self.current_step
+            })
+
+            # IMPORTANT: Reset position state
+            self.position = 0.0
+            self.entry_price = 0.0
+            self.sl_price = 0.0
+            self.tp_price = 0.0
+
             logger.debug(
-                f"Skipping execution: maintaining position={self.position:.4f}"
+                f"Position closed: PnL={pnl:.2f}, cost={cost:.2f}, "
+                f"staying flat (no immediate reopening)"
             )
-        else:
-            # Calculate target position based on execution price (open of bar)
-            target_position, new_sl, new_tp = self.position_sizer.calculate_position_size(
-                self.equity,
-                execution_price,
-                atr,
-                action
+
+            # DO NOT open new position in same step
+            # Even if target_position != 0, we stay flat until next step
+
+        # Case 2: Opening a new position (only when currently flat)
+        elif not has_position and wants_new_position:
+            # Determine if we're buying or selling to open
+            # If target position is positive (long), we buy (is_buying=True)
+            # If target position is negative (short), we sell (is_buying=False)
+            is_buying_to_open = target_position > 0
+
+            # Get execution price with spread
+            entry_price_with_spread = self._get_execution_price_with_spread(
+                execution_price, is_buying_to_open, hour, volatility
             )
-            # Determine if we're closing a position
-            has_position = abs(self.position) > 1e-6
-            wants_new_position = abs(target_position) > 1e-6
-            position_sign_change = (self.position * target_position) < 0  # Signs are different
 
-            # Case 1: Closing an existing position
-            if has_position and (not wants_new_position or position_sign_change):
-                # Determine if we're buying or selling to close
-                # If we have a long position (position > 0), we sell to close (is_buying=False)
-                # If we have a short position (position < 0), we buy to close (is_buying=True)
-                is_buying_to_close = self.position < 0
+            # TODO: Désactiver le spread pour l'ouverture
+            entry_price_with_spread = execution_price  # TEMPORAIRE: Désactiver le spread pour l'ouverture
 
-                # Get execution price with spread
-                exit_price_with_spread = self._get_execution_price_with_spread(
-                    execution_price, is_buying_to_close, hour, volatility
-                )
+            # Calculate transaction cost for opening
+            cost = self.cost_model.cost_in_dollars(
+                abs(target_position),
+                entry_price_with_spread,
+                hour,
+                volatility
+            )
 
-                # Calculate transaction cost for closing
-                cost = self.cost_model.cost_in_dollars(
-                    abs(self.position),
-                    exit_price_with_spread,
-                    hour,
-                    volatility
-                )
+            # Open new position
+            self.position = target_position
+            self.entry_price = entry_price_with_spread
+            self.sl_price = new_sl
+            self.tp_price = new_tp
+            self.equity -= cost
+            self.total_trades += 1
 
-                # Close the position
-                pnl = self._close_position(exit_price_with_spread, hour, volatility)
-                self.trades.append({
-                    'entry_price': self.entry_price,
-                    'exit_price': exit_price_with_spread,
-                    'position': self.position,
-                    'pnl': pnl,
-                    'type': 'Normal',
-                    'step': self.current_step
-                })
-
-                # IMPORTANT: Reset position state
-                self.position = 0.0
-                self.entry_price = 0.0
-                self.sl_price = 0.0
-                self.tp_price = 0.0
-
-                logger.debug(
-                    f"Position closed: PnL={pnl:.2f}, cost={cost:.2f}, "
-                    f"staying flat (no immediate reopening)"
-                )
-
-                # DO NOT open new position in same step (anti-overtrading rule #3)
-                # Even if target_position != 0, we stay flat until next step
-
-            # Case 2: Opening a new position (only when currently flat)
-            elif not has_position and wants_new_position:
-                # Determine if we're buying or selling to open
-                # If target position is positive (long), we buy (is_buying=True)
-                # If target position is negative (short), we sell (is_buying=False)
-                is_buying_to_open = target_position > 0
-
-                # Get execution price with spread
-                entry_price_with_spread = self._get_execution_price_with_spread(
-                    execution_price, is_buying_to_open, hour, volatility
-                )
-
-                # TODO: Désactiver le spread pour l'ouverture
-                entry_price_with_spread = execution_price  # TEMPORAIRE: Désactiver le spread pour l'ouverture
-
-                # Calculate transaction cost for opening
-                cost = self.cost_model.cost_in_dollars(
-                    abs(target_position),
-                    entry_price_with_spread,
-                    hour,
-                    volatility
-                )
-
-                # Open new position
-                self.position = target_position
-                self.entry_price = entry_price_with_spread
-                self.sl_price = new_sl
-                self.tp_price = new_tp
-                self.equity -= cost
-                self.total_trades += 1
-
-                logger.debug(
-                    f"New position opened: size={self.position:.4f}, "
-                    f"entry={entry_price_with_spread:.5f}, SL={new_sl:.5f}, TP={new_tp:.5f}"
-                )
+            logger.debug(
+                f"New position opened: size={self.position:.4f}, "
+                f"entry={entry_price_with_spread:.5f}, SL={new_sl:.5f}, TP={new_tp:.5f}"
+            )
         
         # Update equity based on unrealized P&L
         if abs(self.position) > 1e-6:
@@ -860,15 +1014,31 @@ class TradingEnvironment(gym.Env):
         # Count trades in last day (288 steps)
         recent_steps = self.current_step
         n_trades_today = sum(1 for t in self.trades if t['step'] > recent_steps - 288)
-        
+
         # Calculate reward
-        dense_reward = self.reward_calculator.calculate_dense_reward(
-            current_equity,
-            self.equity_curve[-2] if len(self.equity_curve) > 1 else self.config.initial_capital,
-            self.config.initial_capital,
-            self.returns_buffer,
-            cost
-        )
+        oracle_signal = 0.0  # Initialisé pour info dict
+        if self.config.use_oracle_reward:
+            # Système Oracle : récompense basée sur la vision future
+            # Calculer le signal Oracle
+            action_sign = int(np.sign(action_effective))
+            oracle_signal = self._calculate_oracle_signal(idx, atr, execution_price, action_sign)
+
+            # Reward = action_effective × Signal_Oracle × scaling_factor
+            dense_reward = action_effective * oracle_signal * self.config.reward_scaling_factor
+
+            logger.debug(
+                f"Oracle reward: action_eff={action_effective:.4f}, signal={oracle_signal:.4f}, "
+                f"reward={dense_reward:.4f}"
+            )
+        else:
+            # Ancien système de récompense
+            dense_reward = self.reward_calculator.calculate_dense_reward(
+                current_equity,
+                self.equity_curve[-2] if len(self.equity_curve) > 1 else self.config.initial_capital,
+                self.config.initial_capital,
+                self.returns_buffer,
+                cost
+            )
         
         # Calculate current drawdown (used for termination at 80%)
         current_dd = (self.peak_equity - current_equity) / self.peak_equity if self.peak_equity > 0 else 0.0
@@ -937,7 +1107,9 @@ class TradingEnvironment(gym.Env):
             'transaction_cost': cost,
             'current_step': self.current_step,
             'drawdown': current_dd,
-            'effective_action': action  # NOUVEAU: Action après anti-overtrading (pour le buffer)
+            'action_raw': action_raw,  # Action brute de l'agent
+            'action_effective': action_effective,  # Action après filtre d'inertie
+            'oracle_signal': oracle_signal  # Signal Oracle (si activé)
         }
         
         return obs, total_reward, done, info
