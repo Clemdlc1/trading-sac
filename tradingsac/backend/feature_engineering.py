@@ -43,14 +43,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FeatureConfig:
     """Configuration for feature engineering."""
-    
+
     # Feature groups
-    eurusd_features: int = 10
+    eurusd_features: int = 12  # Augmenté de 10 à 12 (ajout ADX + ATR Ratio)
     dxy_features: int = 4
     cross_features: int = 6
     risk_features: int = 2
-    temporal_features: int = 7  # Increased from 7 to match expected 30 features
-    total_features: int = 29  # 10 + 4 + 6 + 2 + 7 = 29
+    temporal_features: int = 7
+    total_features: int = 31  # 12 + 4 + 6 + 2 + 7 = 31 (était 29)
     
     # Technical indicator parameters
     rsi_period: int = 14
@@ -231,21 +231,109 @@ class TechnicalIndicators:
     def calculate_parkinson_volatility(high: pd.Series, low: pd.Series) -> pd.Series:
         """
         Calculate Parkinson volatility estimator.
-        
+
         Formula: sqrt(log(high/low)² / (4*log(2)))
-        
+
         Args:
             high: High prices
             low: Low prices
-            
+
         Returns:
             Parkinson volatility
         """
         log_hl = np.log(high / (low + 1e-8))
         parkinson = np.sqrt(log_hl ** 2 / (4 * np.log(2)))
-        
+
         # Shift to avoid look-ahead bias
         return parkinson.shift(1)
+
+    @staticmethod
+    def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+        """
+        Calculate ADX (Average Directional Index).
+
+        ADX mesure la force de la tendance sans tenir compte de sa direction.
+        - ADX > 25 : tendance forte
+        - ADX < 20 : marché en range
+
+        Args:
+            high: High prices
+            low: Low prices
+            close: Close prices
+            period: ADX period (typically 14)
+
+        Returns:
+            ADX values [0, 100]
+        """
+        # Calculate True Range
+        high_low = high - low
+        high_close = np.abs(high - close.shift(1))
+        low_close = np.abs(low - close.shift(1))
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+
+        # Calculate Directional Movement
+        high_diff = high - high.shift(1)
+        low_diff = low.shift(1) - low
+
+        # +DM and -DM
+        plus_dm = high_diff.where((high_diff > low_diff) & (high_diff > 0), 0.0)
+        minus_dm = low_diff.where((low_diff > high_diff) & (low_diff > 0), 0.0)
+
+        # Smooth TR, +DM, -DM using Wilder's smoothing (EMA-like)
+        atr = tr.rolling(window=period, min_periods=period).mean()
+        plus_dm_smooth = plus_dm.rolling(window=period, min_periods=period).mean()
+        minus_dm_smooth = minus_dm.rolling(window=period, min_periods=period).mean()
+
+        # Calculate +DI and -DI
+        plus_di = 100 * (plus_dm_smooth / (atr + 1e-8))
+        minus_di = 100 * (minus_dm_smooth / (atr + 1e-8))
+
+        # Calculate DX
+        di_diff = np.abs(plus_di - minus_di)
+        di_sum = plus_di + minus_di
+        dx = 100 * (di_diff / (di_sum + 1e-8))
+
+        # Calculate ADX (smoothed DX)
+        adx = dx.rolling(window=period, min_periods=period).mean()
+
+        # Shift to avoid look-ahead bias
+        return adx.shift(1)
+
+    @staticmethod
+    def calculate_atr_ratio(high: pd.Series, low: pd.Series, close: pd.Series,
+                           short_period: int = 5, long_period: int = 20) -> pd.Series:
+        """
+        Calculate ATR Ratio (short ATR / long ATR).
+
+        Mesure les changements de volatilité :
+        - Ratio > 1 : volatilité croissante
+        - Ratio < 1 : volatilité décroissante
+
+        Args:
+            high: High prices
+            low: Low prices
+            close: Close prices
+            short_period: Short ATR period
+            long_period: Long ATR period
+
+        Returns:
+            ATR ratio values
+        """
+        # Calculate True Range
+        high_low = high - low
+        high_close = np.abs(high - close.shift(1))
+        low_close = np.abs(low - close.shift(1))
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+
+        # Calculate ATRs
+        atr_short = tr.rolling(window=short_period, min_periods=short_period).mean()
+        atr_long = tr.rolling(window=long_period, min_periods=long_period).mean()
+
+        # Calculate ratio
+        atr_ratio = atr_short / (atr_long + 1e-8)
+
+        # Shift to avoid look-ahead bias
+        return atr_ratio.shift(1)
 
 
 class DXYCalculator:
@@ -298,48 +386,65 @@ class FeatureEngineer:
     
     def calculate_eurusd_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Calculate EUR/USD direct features (Group 1: 10 features).
-        
+        Calculate EUR/USD direct features (Group 1: 12 features).
+
         Args:
             df: DataFrame with OHLC data
-            
+
         Returns:
             DataFrame with calculated features
         """
         features = pd.DataFrame(index=df.index)
-        
+
         logger.info("Calculating EUR/USD features...")
-        
+
         # Returns multi-timeframe (4 features)
         features['return_5min'] = self.tech_indicators.calculate_returns(df['close'], periods=1)
         features['return_1h'] = self.tech_indicators.calculate_returns(df['close'], periods=12)
         features['return_4h'] = self.tech_indicators.calculate_returns(df['close'], periods=48)
         features['return_1d'] = self.tech_indicators.calculate_returns(df['close'], periods=288)
-        
+
         # Momentum (2 features)
         features['rsi_14'] = self.tech_indicators.calculate_rsi(df['close'], period=14)
         features['macd_histogram'] = self.tech_indicators.calculate_macd(
             df['close'], fast=12, slow=26, signal=9
         )
-        
+
         # Volatility (3 features)
         atr = self.tech_indicators.calculate_atr(df['high'], df['low'], df['close'], period=14)
         features['atr_14'] = atr / (df['close'].shift(1) + 1e-8)  # Normalize by price
-        
+
         features['parkinson_vol'] = self.tech_indicators.calculate_parkinson_volatility(
             df['high'], df['low']
         )
-        
+
         # Bollinger Bands width
         bb_upper, bb_middle, bb_lower = self.tech_indicators.calculate_bollinger_bands(
             df['close'], period=20, std_dev=2.0
         )
         features['bb_width'] = (bb_upper - bb_lower) / (bb_middle + 1e-8)
-        
+
         # Microstructure (1 feature)
         features['hl_range'] = (df['high'] - df['low']) / (df['close'].shift(1) + 1e-8)
         features['hl_range'] = features['hl_range'].shift(1)  # Additional shift for causality
-        
+
+        # ==================== NOUVELLES FEATURES DE REGIME ====================
+        # Regime features (2 features) - pour détecter tendance vs range
+
+        # ADX (14) - Force de la tendance [0, 100]
+        # ADX > 25 = tendance forte, ADX < 20 = range
+        features['adx_14'] = self.tech_indicators.calculate_adx(
+            df['high'], df['low'], df['close'], period=14
+        )
+        # Normaliser ADX à [0, 1]
+        features['adx_14'] = features['adx_14'] / 100.0
+
+        # ATR Ratio - Changements de volatilité
+        # Ratio > 1 = volatilité croissante, < 1 = décroissante
+        features['atr_ratio'] = self.tech_indicators.calculate_atr_ratio(
+            df['high'], df['low'], df['close'], short_period=5, long_period=20
+        )
+
         return features
     
     def calculate_dxy_features(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
