@@ -53,7 +53,7 @@ class SACConfig:
     """Configuration for SAC agent."""
 
     # Network architecture
-    state_dim: int = 30  # 29 technical features + 1 position feature
+    state_dim: int = 32  # 31 technical features + 1 position feature (ajout ADX + ATR Ratio)
     action_dim: int = 1
     hidden_dims: List[int] = field(default_factory=lambda: [512, 512, 512])
 
@@ -105,7 +105,7 @@ class SACConfig:
 
     # HMM support (for Agent 3)
     use_regime_qfuncs: bool = False
-    state_dim_with_regime: int = 30  # 29 + 2 regime features
+    state_dim_with_regime: int = 34  # 32 base + 2 HMM regime features (is_low_vol, is_high_vol)
     
     # Checkpointing
     models_dir: Path = Path("models/checkpoints")
